@@ -10,7 +10,12 @@
         android:orientation="vertical"
         android:paddingStart="24dp"
         android:paddingTop="8dp"
-        android:paddingEnd="24dp">
+        android:paddingEnd="24dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            style="@style/TituloSeccion"
+            android:text="OPERADOR Y TICKET" />
 
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
@@ -27,7 +32,7 @@
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:hint="Encabezado del ticket (parqueadero / empresa)">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -40,7 +45,7 @@
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:hint="Mensaje de bienvenida"
             app:helperText="Use {nombre} y {evento} para poner los datos del cliente.">
 
@@ -55,7 +60,7 @@
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:hint="Mensaje extra para clientes VIP">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -70,7 +75,7 @@
             android:id="@+id/ajAuto"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
             android:text="Imprimir el ticket automáticamente al registrar" />
 
         <com.google.android.material.materialswitch.MaterialSwitch
@@ -85,20 +90,82 @@
             android:layout_height="wrap_content"
             android:text="Leer el QR con el lector integrado del Sunmi (si no, con la cámara)" />
 
-        <com.google.android.material.materialswitch.MaterialSwitch
-            android:id="@+id/ajConfirmarPlaca"
+        <TextView
+            style="@style/TituloSeccion"
+            android:layout_marginTop="18dp"
+            android:text="SERVIDOR" />
+
+        <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Confirmar antes de registrar una placa leída con la cámara" />
+            android:hint="Dirección para ENVIAR los registros (POST)"
+            app:helperText="Ej: https://su-servidor.com/api/registros">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajUrlEnvio"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Dirección para TRAER reservas nuevas (GET)"
+            app:helperText="Ej: https://su-servidor.com/api/reservas">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajUrlReservas"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Clave del servidor (token)"
+            app:endIconMode="password_toggle">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajToken"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textPassword" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Enviar cada cuántos registros (1 a 10)"
+            app:helperText="Nunca quedan más de 10 registros esperando: al llegar a 10 se envían de una vez.">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajLote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:maxLength="2" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajAutoReservas"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Traer reservas nuevas automáticamente (cada 15 min con internet)" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajPrueba"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="8dp"
+            android:layout_marginTop="12dp"
             android:text="Imprimir ticket de prueba"
-            android:textColor="@color/blanco" />
+            android:textColor="@color/blanco"
+            app:strokeColor="@color/tarjeta_borde" />
     </LinearLayout>
 </ScrollView>

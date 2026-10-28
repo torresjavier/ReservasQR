@@ -1,18 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Paleta: negro, rojo y blanco (los grises son tonos de negro/blanco para textos secundarios y bordes) -->
 <resources>
-    <color name="fondo">#000000</color>
-    <color name="tarjeta">#111111</color>
-    <color name="tarjeta_borde">#2A2A2A</color>
-    <color name="blanco">#FFFFFF</color>
     <color name="negro">#000000</color>
+    <color name="blanco">#FFFFFF</color>
+    <color name="rojo">#E10600</color>
+    <color name="rojo_oscuro">#5C0300</color>
+
+    <color name="fondo">#000000</color>
+    <color name="tarjeta">#0E0E0E</color>
+    <color name="tarjeta_borde">#262626</color>
     <color name="texto">#FFFFFF</color>
-    <color name="texto_suave">#8E8E93</color>
-    <color name="verde">#22C55E</color>
-    <color name="verde_fondo">#0F3D22</color>
-    <color name="amarillo_placa">#F2C230</color>
-    <color name="dorado">#F5B301</color>
-    <color name="aviso">#F59E0B</color>
-    <color name="aviso_fondo">#3D2A05</color>
-    <color name="rojo">#EF4444</color>
-    <color name="rojo_fondo">#3D0F0F</color>
+    <color name="texto_suave">#9B9B9B</color>
 </resources>

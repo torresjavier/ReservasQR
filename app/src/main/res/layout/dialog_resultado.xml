@@ -2,7 +2,8 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content">
+    android:layout_height="wrap_content"
+    android:background="@color/tarjeta">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -15,12 +16,20 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:paddingStart="16dp"
-            android:paddingTop="22dp"
+            android:paddingTop="20dp"
             android:paddingEnd="16dp"
-            android:paddingBottom="22dp"
-            android:textColor="@color/blanco"
-            android:textSize="24sp"
+            android:paddingBottom="20dp"
+            android:textColor="@color/negro"
+            android:textSize="22sp"
             android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/resFoto"
+            android:layout_width="match_parent"
+            android:layout_height="170dp"
+            android:contentDescription="Foto del ingreso"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -36,9 +45,9 @@
                 android:background="@drawable/placa"
                 android:fontFamily="monospace"
                 android:paddingStart="18dp"
-                android:paddingTop="6dp"
+                android:paddingTop="4dp"
                 android:paddingEnd="18dp"
-                android:paddingBottom="6dp"
+                android:paddingBottom="4dp"
                 android:textColor="@color/negro"
                 android:textSize="34sp"
                 android:textStyle="bold" />
@@ -54,7 +63,7 @@
                 android:paddingEnd="16dp"
                 android:paddingBottom="4dp"
                 android:text="★ CLIENTE VIP"
-                android:textColor="@color/negro"
+                android:textColor="@color/blanco"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -102,6 +111,8 @@
                 android:layout_width="0dp"
                 android:layout_height="60dp"
                 android:layout_weight="1"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
                 android:textColor="@color/blanco"
                 android:textSize="15sp"
                 app:cornerRadius="14dp"
@@ -113,10 +124,12 @@
                 android:layout_height="60dp"
                 android:layout_marginStart="10dp"
                 android:layout_weight="1"
-                android:textColor="@color/negro"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:textColor="@color/blanco"
                 android:textSize="15sp"
                 android:textStyle="bold"
-                app:backgroundTint="@color/blanco"
+                app:backgroundTint="@color/rojo"
                 app:cornerRadius="14dp" />
         </LinearLayout>
     </LinearLayout>

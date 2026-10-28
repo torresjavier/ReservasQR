@@ -102,8 +102,3 @@ object EscanerSunmi {
         }
     }
 }
-
-/** Datos que comparte la pantalla principal con la cámara de placas. */
-object Compartido {
-    @Volatile var listado: Listado? = null
-}

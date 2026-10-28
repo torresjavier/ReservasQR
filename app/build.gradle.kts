@@ -12,8 +12,8 @@ android {
         // Android 7.0 o superior (los equipos Sunmi V2 / P2 traen Android 7.1 u 11)
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     buildTypes {
@@ -50,4 +50,8 @@ dependencies {
     implementation("androidx.camera:camera-view:1.3.4")
     // OCR de Google (incluido en la app: funciona sin internet y sin Google Play)
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Envío y descarga en segundo plano (solo con internet, cuida la batería)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    // Saber cuándo la app pasa a segundo plano (para pedir la clave del equipo)
+    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
 }

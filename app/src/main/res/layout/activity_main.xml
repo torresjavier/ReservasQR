@@ -1,195 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/fondo"
-    android:orientation="vertical">
+    android:background="@color/fondo">
 
-    <!-- ===== Encabezado ===== -->
     <LinearLayout
-        android:id="@+id/header"
+        android:id="@+id/contenido"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingStart="16dp"
-        android:paddingTop="12dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="12dp">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/avatar"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="@drawable/circulo_blanco"
-                android:gravity="center"
-                android:text="O"
-                android:textColor="@color/negro"
-                android:textSize="18sp"
-                android:textStyle="bold" />
-
-            <LinearLayout
-                android:id="@+id/zonaOperador"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:layout_weight="1"
-                android:background="?attr/selectableItemBackground"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/txtOperador"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:singleLine="true"
-                    android:textColor="@color/texto"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/txtSubtitulo"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:singleLine="true"
-                    android:textColor="@color/texto_suave"
-                    android:textSize="15sp" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/txtPill"
-                android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:layout_marginStart="8dp"
-                android:background="@drawable/pill_borde"
-                android:gravity="center"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:textColor="@color/texto"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <ImageButton
-                android:id="@+id/btnAjustes"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:layout_marginStart="4dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Ajustes"
-                android:src="@drawable/ic_ajustes"
-                app:tint="@color/texto_suave" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/zonaImpresora"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:background="?attr/selectableItemBackground"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:contentDescription="Impresora"
-                android:src="@drawable/ic_impresora"
-                app:tint="@color/texto_suave" />
-
-            <TextView
-                android:id="@+id/txtImpresora"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:textColor="@color/texto_suave"
-                android:textSize="15sp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/zonaLector"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:background="?attr/selectableItemBackground"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:contentDescription="Lector"
-                android:src="@drawable/ic_qr"
-                app:tint="@color/texto_suave" />
-
-            <TextView
-                android:id="@+id/txtLector"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:textColor="@color/texto_suave"
-                android:textSize="15sp" />
-        </LinearLayout>
-
-        <!-- Pestañas -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="14dp"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/tabIngresos"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:textSize="17sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tabBuscar"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text="Buscar placa"
-                android:textSize="17sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/tarjeta_borde" />
-
-    <!-- ===== Pestaña INGRESOS ===== -->
-    <LinearLayout
-        android:id="@+id/panelIngresos"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Tarjeta de escaneo -->
+        <!-- ===== Encabezado: operador, estado y contador ===== -->
         <LinearLayout
+            android:id="@+id/header"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="14dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/tarjeta"
             android:orientation="vertical"
-            android:padding="14dp">
+            android:paddingStart="16dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="10dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -197,217 +29,239 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:contentDescription="QR"
-                    android:src="@drawable/ic_qr"
-                    app:tint="@color/texto_suave" />
+                <FrameLayout
+                    android:id="@+id/zonaAvatar"
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:foreground="?attr/selectableItemBackgroundBorderless">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                    <TextView
+                        android:id="@+id/avatar"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@drawable/circulo_blanco"
+                        android:gravity="center"
+                        android:textColor="@color/negro"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.imageview.ShapeableImageView
+                        android:id="@+id/imgAvatar"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:contentDescription="Foto del operador"
+                        android:scaleType="centerCrop"
+                        android:visibility="gone"
+                        app:shapeAppearanceOverlay="@style/Circulo"
+                        app:strokeColor="@color/rojo"
+                        app:strokeWidth="2dp" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:id="@+id/zonaOperador"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:letterSpacing="0.08"
-                    android:text="RESERVA CON QR"
-                    android:textColor="@color/texto_suave"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/txtOperador"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:textColor="@color/texto"
+                        android:textSize="19sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/txtSubtitulo"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:textColor="@color/texto_suave"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <ImageButton
+                    android:id="@+id/btnMenu"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Más opciones"
+                    android:src="@drawable/ic_menu"
+                    app:tint="@color/blanco" />
             </LinearLayout>
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnEscanear"
-                android:layout_width="match_parent"
-                android:layout_height="68dp"
-                android:layout_marginTop="12dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:text="Escanear el QR"
-                android:textColor="@color/negro"
-                android:textSize="19sp"
-                android:textStyle="bold"
-                app:backgroundTint="@color/blanco"
-                app:cornerRadius="18dp"
-                app:icon="@drawable/ic_camara"
-                app:iconGravity="textStart"
-                app:iconPadding="12dp"
-                app:iconSize="26dp"
-                app:iconTint="@color/negro" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="horizontal">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnQrCamara"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="54dp"
-                    android:layout_weight="1"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:text="QR con cámara"
-                    android:textColor="@color/blanco"
-                    android:textSize="14sp"
-                    app:cornerRadius="14dp"
-                    app:icon="@drawable/ic_camara"
-                    app:iconSize="18dp"
-                    app:iconTint="@color/blanco"
-                    app:strokeColor="@color/tarjeta_borde" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnLeerPlaca"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="54dp"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:text="Leer placa"
-                    android:textColor="@color/amarillo_placa"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    app:cornerRadius="14dp"
-                    app:icon="@drawable/ic_carro"
-                    app:iconSize="18dp"
-                    app:iconTint="@color/amarillo_placa"
-                    app:strokeColor="@color/amarillo_placa" />
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="«Escanear el QR» enciende el lector del Sunmi (también sirven sus botones laterales). «Leer placa» reconoce la placa con la cámara."
-                android:textColor="@color/texto_suave"
-                android:textSize="13sp" />
-        </LinearLayout>
-
-        <!-- Tarjeta del listado -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/tarjeta"
-            android:orientation="vertical"
-            android:paddingTop="12dp"
-            android:paddingBottom="10dp">
-
-            <TextView
-                android:id="@+id/txtListado"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="2"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:textColor="@color/texto"
-                android:textSize="14sp" />
-
+            <!-- Estado de impresora, lector y envío -->
             <HorizontalScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
                 android:scrollbars="none">
 
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="6dp">
+                    android:orientation="horizontal">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCargar"
-                        style="@style/BotonChip"
-                        android:text="Cargar Excel"
-                        app:icon="@drawable/ic_archivo" />
+                    <TextView
+                        android:id="@+id/chipImpresora"
+                        style="@style/ChipEstado" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnBluetooth"
-                        style="@style/BotonChip"
-                        android:text="Bluetooth"
-                        app:icon="@drawable/ic_bluetooth" />
+                    <TextView
+                        android:id="@+id/chipLector"
+                        style="@style/ChipEstado" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnColumnas"
-                        style="@style/BotonChip"
-                        android:text="Columnas"
-                        app:icon="@drawable/ic_columnas" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnExportar"
-                        style="@style/BotonChip"
-                        android:text="Exportar"
-                        app:icon="@drawable/ic_compartir" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnReiniciar"
-                        style="@style/BotonChip"
-                        android:text="Reiniciar"
-                        android:textColor="@color/rojo" />
+                    <TextView
+                        android:id="@+id/chipEnvio"
+                        style="@style/ChipEstado" />
                 </LinearLayout>
             </HorizontalScrollView>
-        </LinearLayout>
 
-        <!-- Encabezado de la lista -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp">
-
-            <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:contentDescription="Vehículos"
-                android:src="@drawable/ic_carro"
-                app:tint="@color/texto_suave" />
-
-            <TextView
-                android:id="@+id/txtAdentro"
-                android:layout_width="0dp"
+            <!-- Contador -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:textColor="@color/texto_suave"
-                android:textSize="15sp" />
+                android:layout_marginTop="12dp"
+                android:layout_marginEnd="8dp"
+                android:baselineAligned="true"
+                android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/chipVer"
-                android:layout_width="wrap_content"
-                android:layout_height="34dp"
-                android:background="@drawable/pill_borde"
-                android:gravity="center"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:textColor="@color/texto"
-                android:textSize="13sp" />
+                <TextView
+                    android:id="@+id/txtContador"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="@color/blanco"
+                    android:textSize="36sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/txtTotal"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text=" / 0 ingresados"
+                    android:textColor="@color/texto_suave"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/txtFaltan"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/rojo"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <com.google.android.material.progressindicator.LinearProgressIndicator
+                android:id="@+id/progreso"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:layout_marginEnd="8dp"
+                android:max="100"
+                app:indicatorColor="@color/rojo"
+                app:trackColor="@color/tarjeta_borde"
+                app:trackCornerRadius="4dp"
+                app:trackThickness="6dp" />
+
+            <!-- Buscador de placa -->
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginEnd="8dp">
+
+                <EditText
+                    android:id="@+id/edtPlaca"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/caja_buscar"
+                    android:fontFamily="monospace"
+                    android:hint="BUSCAR PLACA"
+                    android:imeOptions="actionSearch"
+                    android:importantForAutofill="no"
+                    android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
+                    android:maxLength="20"
+                    android:paddingStart="52dp"
+                    android:paddingEnd="52dp"
+                    android:singleLine="true"
+                    android:textColor="@color/negro"
+                    android:textColorHint="#80000000"
+                    android:textSize="24sp"
+                    android:textStyle="bold" />
+
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_gravity="center_vertical|start"
+                    android:layout_marginStart="16dp"
+                    android:contentDescription="Buscar"
+                    android:src="@drawable/ic_buscar"
+                    app:tint="@color/negro" />
+
+                <ImageButton
+                    android:id="@+id/btnLimpiar"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center_vertical|end"
+                    android:layout_marginEnd="6dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Borrar búsqueda"
+                    android:src="@drawable/ic_cerrar"
+                    android:visibility="gone"
+                    app:tint="@color/negro" />
+            </FrameLayout>
+
+            <!-- Pendientes / Ingresados -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="10dp"
+                android:layout_marginEnd="8dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/segPendientes"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/segIngresados"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
         </LinearLayout>
 
+        <!-- Lista -->
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="6dp"
             android:layout_weight="1">
 
             <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/listaIngresos"
+                android:id="@+id/lista"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:clipToPadding="false"
-                android:paddingBottom="16dp" />
+                android:paddingTop="4dp"
+                android:paddingBottom="12dp" />
 
             <TextView
-                android:id="@+id/vacioIngresos"
+                android:id="@+id/txtVacio"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
@@ -416,71 +270,158 @@
                 android:textColor="@color/texto_suave"
                 android:textSize="15sp" />
         </FrameLayout>
+
+        <!-- ===== Accesos rápidos de la operación ===== -->
+        <LinearLayout
+            android:id="@+id/dock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/dock"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp">
+
+            <LinearLayout
+                android:id="@+id/btnDockQr"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:contentDescription="Escanear QR"
+                    android:src="@drawable/ic_qr"
+                    app:tint="@color/blanco" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Escanear QR"
+                    android:textColor="@color/blanco"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.2"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/btnDockPlaca"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="Leer placa con la cámara"
+                    android:src="@drawable/ic_camara"
+                    app:backgroundTint="@color/rojo"
+                    app:fabCustomSize="72dp"
+                    app:maxImageSize="34dp"
+                    app:tint="@color/blanco" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Leer placa"
+                    android:textColor="@color/rojo"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/btnDockBuscar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:contentDescription="Buscar placa"
+                    android:src="@drawable/ic_buscar"
+                    app:tint="@color/blanco" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Buscar placa"
+                    android:textColor="@color/blanco"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
     </LinearLayout>
 
-    <!-- ===== Pestaña BUSCAR PLACA ===== -->
+    <!-- ===== Pantalla de bloqueo ===== -->
     <LinearLayout
-        android:id="@+id/panelBuscar"
+        android:id="@+id/panelBloqueo"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="match_parent"
+        android:background="@color/negro"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
         android:orientation="vertical"
+        android:padding="32dp"
         android:visibility="gone">
 
-        <EditText
-            android:id="@+id/edtPlaca"
-            android:layout_width="match_parent"
-            android:layout_height="76dp"
-            android:layout_marginStart="16dp"
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:contentDescription="Bloqueado"
+            android:src="@drawable/ic_candado"
+            app:tint="@color/rojo" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/placa"
-            android:fontFamily="monospace"
-            android:gravity="center"
-            android:hint="ABC123"
-            android:importantForAutofill="no"
-            android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
-            android:maxLength="20"
-            android:singleLine="true"
-            android:textColor="@color/negro"
-            android:textColorHint="#80000000"
-            android:textSize="34sp"
+            android:text="Reservas QR"
+            android:textColor="@color/blanco"
+            android:textSize="26sp"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/txtAyudaBuscar"
+            android:id="@+id/txtBloqueo"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:gravity="center"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:text="Escriba la placa (también sirve el código de la reserva o el nombre)."
+            android:text="Ingrese la clave de desbloqueo del equipo para continuar."
             android:textColor="@color/texto_suave"
-            android:textSize="13sp" />
+            android:textSize="15sp" />
 
-        <FrameLayout
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDesbloquear"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_marginTop="8dp"
-            android:layout_weight="1">
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/listaBuscar"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:clipToPadding="false"
-                android:paddingBottom="16dp" />
-
-            <TextView
-                android:id="@+id/vacioBuscar"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:gravity="center"
-                android:padding="32dp"
-                android:textColor="@color/texto_suave"
-                android:textSize="15sp" />
-        </FrameLayout>
+            android:layout_height="62dp"
+            android:layout_marginTop="28dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="Desbloquear"
+            android:textColor="@color/negro"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            app:backgroundTint="@color/blanco"
+            app:cornerRadius="16dp"
+            app:icon="@drawable/ic_candado"
+            app:iconGravity="textStart"
+            app:iconTint="@color/negro" />
     </LinearLayout>
-</LinearLayout>
+</FrameLayout>

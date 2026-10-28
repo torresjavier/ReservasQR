@@ -135,6 +135,18 @@ public final class OcrPlaca {
         return false;
     }
 
+    /** Representa cada grupo de caracteres confundibles con uno solo: "QYR2O3" y "OYR203" dan lo mismo. */
+    public static String canonica(String placa) {
+        StringBuilder r = new StringBuilder(placa.length());
+        for (int i = 0; i < placa.length(); i++) {
+            char c = placa.charAt(i);
+            char rep = c;
+            for (String g : GRUPOS) if (g.indexOf(c) >= 0) { rep = g.charAt(0); break; }
+            r.append(rep);
+        }
+        return r.toString();
+    }
+
     /** Compara dos placas ya normalizadas aceptando las confusiones del OCR. */
     public static boolean coinciden(String leida, String delListado) {
         if (leida.length() != delListado.length()) return false;

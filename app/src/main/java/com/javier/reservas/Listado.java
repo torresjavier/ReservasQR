@@ -53,6 +53,8 @@ public final class Listado {
     private Map<String, List<Integer>> idxCodigo = new HashMap<>();
     private Map<String, List<Integer>> idxPlaca = new HashMap<>();
     private Map<String, List<Integer>> idxTodo = new HashMap<>();
+    /** Placa "canónica" (O=Q=D=0, I=L=1, B=8…) → filas. Búsqueda OCR instantánea aunque haya miles. */
+    private Map<String, List<Integer>> idxCanon = new HashMap<>();
 
     public Listado() {
         java.util.Arrays.fill(columnas, -1);
@@ -91,6 +93,18 @@ public final class Listado {
             l.filas.add(fila);
         }
         l.autoMapear();
+        return l;
+    }
+
+    /** Listado vacío con las columnas estándar (para cuando las reservas llegan solo del servidor). */
+    public static Listado vacio(String nombre) {
+        Listado l = new Listado();
+        l.nombreArchivo = nombre;
+        for (Campo c : Campo.values()) {
+            l.encabezados.add(c.titulo);
+            l.columnas[c.ordinal()] = c.ordinal();
+        }
+        l.reindexar();
         return l;
     }
 
@@ -157,6 +171,7 @@ public final class Listado {
         idxCodigo = new HashMap<>();
         idxPlaca = new HashMap<>();
         idxTodo = new HashMap<>();
+        idxCanon = new HashMap<>();
         int cc = columna(Campo.CODIGO), cp = columna(Campo.PLACA);
         for (int i = 0; i < filas.size(); i++) {
             List<String> f = filas.get(i);
@@ -167,7 +182,11 @@ public final class Listado {
                 agregar(idxCodigo, p, i);
                 agregar(idxCodigo, sinCeros(p), i);
             }
-            if (cp >= 0) agregar(idxPlaca, normPlaca(f.get(cp)), i);
+            if (cp >= 0) {
+                String pl = normPlaca(f.get(cp));
+                agregar(idxPlaca, pl, i);
+                agregar(idxCanon, OcrPlaca.canonica(pl), i);
+            }
             if (!tieneClave()) {
                 for (String v : f) {
                     agregar(idxTodo, normalizar(v), i);
@@ -270,18 +289,91 @@ public final class Listado {
         if (p.length() < 4) return Collections.emptyList();
         List<Integer> exactas = idxPlaca.get(p);
         if (exactas != null) return exactas;
-        List<Integer> out = new ArrayList<>();
-        int cp = columna(Campo.PLACA);
-        if (cp < 0) return out;
-        for (int i = 0; i < filas.size(); i++) {
-            if (OcrPlaca.coinciden(p, normPlaca(filas.get(i).get(cp)))) out.add(i);
-        }
-        return out;
+        List<Integer> parecidas = idxCanon.get(OcrPlaca.canonica(p));
+        return parecidas != null ? parecidas : Collections.<Integer>emptyList();
+    }
+
+    /** true si la placa leída es exactamente igual a la del listado (sin correcciones). */
+    public boolean placaExacta(String leida) {
+        return idxPlaca.containsKey(normPlaca(leida));
     }
 
     /** Placa del listado, normalizada (sin espacios ni guiones). */
     public String placaNormal(int fila) {
         return normPlaca(valor(fila, Campo.PLACA));
+    }
+
+    /**
+     * Agrega o actualiza reservas que llegan del servidor sin perder las del Excel ni los ingresos.
+     * Se busca la reserva por código (o por placa si no trae código). Las columnas que no existan se crean.
+     * @return {nuevas, actualizadas}
+     */
+    public int[] fusionar(List<String> encNuevos, List<List<String>> filasNuevas) {
+        int nuevas = 0, actualizadas = 0;
+        if (filasNuevas.isEmpty()) return new int[]{0, 0};
+        List<List<String>> tabla = new ArrayList<>();
+        tabla.add(encNuevos);
+        tabla.addAll(filasNuevas);
+        Listado t = desdeTabla("servidor", tabla);
+
+        // Columna destino para cada columna del servidor
+        int[] destino = new int[t.encabezados.size()];
+        java.util.Arrays.fill(destino, -1);
+        for (Campo c : Campo.values()) {
+            int origen = t.columna(c);
+            if (origen < 0) continue;
+            if (columna(c) < 0) columnas[c.ordinal()] = agregarColumna(c.titulo);
+            destino[origen] = columna(c);
+        }
+        for (int i = 0; i < destino.length; i++) {
+            if (destino[i] >= 0) continue;
+            String h = t.encabezados.get(i);
+            int existente = -1;
+            for (int j = 0; j < encabezados.size(); j++) {
+                if (normalizar(encabezados.get(j)).equals(normalizar(h))) { existente = j; break; }
+            }
+            destino[i] = existente >= 0 ? existente : agregarColumna(h);
+        }
+        reindexar();
+
+        for (int r = 0; r < t.filas.size(); r++) {
+            String codigo = t.valor(r, Campo.CODIGO);
+            String placa = t.valor(r, Campo.PLACA);
+            int fila = -1;
+            if (!codigo.isEmpty()) {
+                List<Integer> x = idxCodigo.get(normalizar(codigo));
+                if (x != null && !x.isEmpty()) fila = x.get(0);
+            } else if (!placa.isEmpty()) {
+                List<Integer> x = idxPlaca.get(normPlaca(placa));
+                if (x != null && !x.isEmpty()) fila = x.get(0);
+            }
+            List<String> src = t.filas.get(r);
+            if (fila < 0) {
+                List<String> f = new ArrayList<>(encabezados.size());
+                for (int c = 0; c < encabezados.size(); c++) f.add("");
+                filas.add(f);
+                fila = filas.size() - 1;
+                nuevas++;
+            } else {
+                actualizadas++;
+            }
+            List<String> f = filas.get(fila);
+            for (int c = 0; c < src.size(); c++) {
+                String v = src.get(c);
+                if (v != null && !v.isEmpty()) f.set(destino[c], v);
+            }
+            // reindexar parcial para que una reserva repetida en el mismo lote se actualice y no se duplique
+            if (columna(Campo.CODIGO) >= 0) agregar(idxCodigo, normalizar(f.get(columna(Campo.CODIGO))), fila);
+            if (columna(Campo.PLACA) >= 0) agregar(idxPlaca, normPlaca(f.get(columna(Campo.PLACA))), fila);
+        }
+        reindexar();
+        return new int[]{nuevas, actualizadas};
+    }
+
+    private int agregarColumna(String titulo) {
+        encabezados.add(titulo);
+        for (List<String> f : filas) f.add("");
+        return encabezados.size() - 1;
     }
 
     private boolean filaContiene(int fila, String qn) {

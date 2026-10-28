@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import java.text.SimpleDateFormat
@@ -11,7 +12,6 @@ import java.util.Date
 import java.util.Locale
 
 class ReservaAdapter(
-    private val listado: () -> Listado?,
     private val alTocar: (Int) -> Unit
 ) : RecyclerView.Adapter<ReservaAdapter.VH>() {
 
@@ -30,6 +30,7 @@ class ReservaAdapter(
         val hora: TextView = v.findViewById(R.id.itHora)
         val nombre: TextView = v.findViewById(R.id.itNombre)
         val detalle: TextView = v.findViewById(R.id.itDetalle)
+        val foto: ImageView = v.findViewById(R.id.itFoto)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
@@ -38,27 +39,27 @@ class ReservaAdapter(
     override fun getItemCount(): Int = filas.size
 
     override fun onBindViewHolder(h: VH, position: Int) {
-        val l = listado() ?: return
+        val l = Operacion.listado ?: return
         val f = filas[position]
-        val placa = l.valor(f, Listado.Campo.PLACA)
-        h.placa.text = placa.uppercase().ifBlank { "SIN PLACA" }
+        if (f >= l.filas.size) return
+        val ctx = h.itemView.context
+        h.placa.text = l.valor(f, Listado.Campo.PLACA).uppercase().ifBlank { "SIN PLACA" }
         h.vip.visibility = if (l.esVip(f)) View.VISIBLE else View.GONE
 
         val t = l.ingresos[f]
         if (t != null) {
-            h.hora.text = "● " + hora.format(Date(t))
-            h.hora.setTextColor(h.itemView.context.getColor(R.color.verde))
+            h.hora.text = "✓ " + hora.format(Date(t))
+            h.hora.setTextColor(ctx.getColor(R.color.blanco))
         } else {
-            h.hora.text = "Pendiente"
-            h.hora.setTextColor(h.itemView.context.getColor(R.color.texto_suave))
+            h.hora.text = "PENDIENTE"
+            h.hora.setTextColor(ctx.getColor(R.color.rojo))
         }
+        h.foto.visibility = if (Operacion.info[f]?.foto != null) View.VISIBLE else View.GONE
 
-        val nombre = l.valor(f, Listado.Campo.NOMBRE)
-        h.nombre.text = nombre.ifBlank { l.titulo(f) }
+        h.nombre.text = l.valor(f, Listado.Campo.NOMBRE).ifBlank { l.titulo(f) }
         val partes = listOf(
             l.valor(f, Listado.Campo.EVENTO),
-            l.valor(f, Listado.Campo.CODIGO).let { if (it.isNotBlank()) "Reserva $it" else "" },
-            l.valor(f, Listado.Campo.TIPO).let { if (it.isNotBlank() && !l.esVip(f)) it.uppercase() else "" }
+            l.valor(f, Listado.Campo.CODIGO).let { if (it.isNotBlank()) "Reserva $it" else "" }
         ).filter { it.isNotBlank() }
         h.detalle.text = partes.joinToString("  ·  ")
         h.detalle.visibility = if (partes.isEmpty()) View.GONE else View.VISIBLE
