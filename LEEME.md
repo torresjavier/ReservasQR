@@ -1,4 +1,4 @@
-# Reservas QR · v1.3
+# Reservas QR · v1.4
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
@@ -56,22 +56,44 @@ Si se olvida: **«Olvidé el PIN»** pide la clave de desbloqueo del equipo y de
 
 Colores: negro, rojo y blanco.
 
-## Leer placas con la cámara
+## Leer placas con la cámara (v1.4)
 
-Pensada para carros y motos de Colombia, **placas amarillas o blancas**:
+Pensada para carros y motos de Colombia, **placas amarillas o blancas**, y para el vehículo **en movimiento** en la vía.
 
-1. **Detector de placa:** primero un detector liviano busca una zona con **color de placa (amarillo o blanco), trazos de caracteres y forma de placa**.
-   Si no hay placa a la vista, **no se usa el OCR** (no se gasta batería leyendo letreros, paredes o carrocerías).
-2. **Enfoque:** al encontrar la placa, un recuadro rojo la sigue, la cámara **enfoca y mide la luz sobre ella** y, si está lejos y al centro, acerca un poco.
-3. **OCR solo del recorte:** se lee únicamente la placa, ampliada. Esto evita confusiones con otros textos de la escena.
-4. **Carro o moto:** ABC123 (carro, 1 renglón), ABC12D y ABC12 (moto, **2 renglones**: letras arriba y números abajo).
-   La forma de la placa ayuda a decidir si el último carácter es letra o número.
-5. **Confusiones del OCR:** O/Q/D/0, I/L/1, B/8, S/5, Z/2, G/6, A/4 y T/7 se corrigen según la posición de cada carácter
-   y la búsqueda en el listado las tolera (índice instantáneo aunque haya miles de placas).
-   Una lectura exacta se acepta en un cuadro; si hubo que corregir un carácter, se confirma con un segundo cuadro.
-6. **Modo ahorro:** sin placa por **20 segundos** casi no procesa cuadros, baja el brillo y se despierta sola cuando aparece una placa
-   (o al tocar la pantalla). Tocar la cámara en uso fuerza una lectura completa de 3 s si el detector no encuentra la placa.
-7. Una zona que parece placa pero nunca se lee (por ejemplo un letrero amarillo) se ignora unos segundos.
+### Cómo trabaja
+
+1. **Zona fija de lectura.** Hay un recuadro blanco punteado en la pantalla. El operador pone el Sunmi en un punto fijo (o lo apoya) y la placa debe pasar por ese recuadro.
+   La cámara **enfoca y mide la luz una sola vez en ese punto** y se queda quieta: ya no «se vuelve loca» buscando foco a cada cuadro.
+2. **Lectura de ese recuadro, no de toda la escena.** El OCR lee solo la franja del recuadro, ampliada. Un detector de color/forma de placa ayuda a ubicarla dentro de la franja,
+   pero **ya no es obligatorio**: si el detector no la ve (moto, placa sucia, poca luz) igual se lee la zona.
+3. **Varias versiones de la misma imagen.** Cuando hay indicio de placa, cada cuadro se prueba alternando: original, contraste + afilado, blanco y negro adaptativo,
+   blanco y negro Otsu y afilado horizontal (contra el borroso del movimiento).
+4. **Se descartan los cuadros movidos.** Se mide la nitidez del recorte; si está borroso se salta (máximo 3 seguidos) y se espera un cuadro mejor.
+5. **Votación entre cuadros.** Durante 2,5 s se juntan todas las lecturas. Cada una pesa más si fue limpia y nítida; la placa final sale carácter por carácter del que más votos tuvo.
+   Una lectura exacta que esté en el listado se acepta rápido; una corregida o una de «sin reserva» necesita más acuerdo entre cuadros.
+6. **Carro o moto.** Placa de **2 renglones = MOTO** (ABC12D / ABC12); de 1 renglón = CARRO (ABC123). Se muestra en pantalla y en los avisos.
+   Si el tipo visto no coincide con el de la reserva, sale la alerta «Tipo no coincide».
+7. **Confusiones del OCR:** O/Q/D/0, I/L/1, B/8, S/5, Z/2, G/6, A/4 y T/7 se corrigen según la posición de cada carácter y la búsqueda en el listado las tolera.
+8. **Miniatura.** Abajo a la izquierda se ve lo que está leyendo el OCR (recorte ya procesado). El recuadro rojo marca la placa encontrada.
+
+### Opciones (botones arriba de la cámara, quedan guardadas)
+
+| Botón | Valores | Para qué sirve |
+|---|---|---|
+| **Lectura** | AUTO · ZONA FIJA · TODA LA IMAGEN | AUTO usa el detector y, si no encuentra, la zona fija. ZONA FIJA lee siempre el recuadro (la más estable para la vía). TODA LA IMAGEN para placas muy cerca o fuera del recuadro. |
+| **Zoom** | 1x · 1,5x · 2x · 3x | Acerca la cámara. Úselo si la placa se ve pequeña en el recuadro. |
+| **Foco** | AUTO · fijo a 70 cm · 1,2 m · 2 m · 4 m | AUTO enfoca una vez en el recuadro. Con una distancia fija el lente no se mueve: elija la distancia a la que pasan las placas. Si el equipo no lo permite, queda en AUTO. |
+| **Movimiento** | NORMAL · RÁPIDO · MANUAL | RÁPIDO pide más cuadros por segundo y modo deporte (si el equipo lo tiene). MANUAL fija una exposición corta (menos borroso) y ajusta sola ISO/tiempo según la luz. |
+| **Calidad** | NORMAL 720p · ALTA 1080p | ALTA da más detalle a la placa; gasta más batería. |
+
+**Recomendación para empezar en la vía:** Lectura = ZONA FIJA, Zoom 1,5× o 2×, Foco = la distancia real, Movimiento = RÁPIDO (si hay borroso, MANUAL), Calidad = ALTA.
+En el interior (vehículo parado): todo en AUTO/NORMAL basta.
+
+### Ahorro de batería
+
+- Sin placa por **20 segundos**: casi no procesa cuadros, baja el brillo y se despierta sola cuando aparece una placa (o al tocar la pantalla).
+- Tocar la cámara en uso **fuerza una lectura de toda la imagen por 3 s** y vuelve a enfocar.
+- Una zona que parece placa pero nunca se lee (un letrero amarillo, por ejemplo) se ignora unos segundos.
 
 Si la placa es de VIP, el aviso lleva borde rojo. Durante 12 segundos no se vuelve a procesar la misma placa.
 

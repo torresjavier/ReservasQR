@@ -48,9 +48,10 @@ public final class DetectorPlaca {
     }
 
     // ---- Parámetros (ajustados con placas sintéticas; ver pruebas)
-    private static final int UMBRAL_BORDE = 28;      // diferencia de brillo para contar un trazo
-    private static final int OSCURO = 105;           // brillo máximo de un trazo oscuro
-    private static final int BLANCO_MIN = 125;       // brillo mínimo del fondo blanco
+    // Los umbrales de brillo se ajustan a la luz de la escena (de noche o con sombra todo es más oscuro)
+    private static final int BORDE_MIN = 14, BORDE_MAX = 36;      // diferencia de brillo para contar un trazo
+    private static final int OSCURO_MIN = 45, OSCURO_MAX = 110;   // brillo máximo de un trazo oscuro
+    private static final int CLARO_MIN = 62, CLARO_MAX = 130;     // brillo mínimo del fondo blanco
     private static final int BLOQUE = 6;             // celdas por lado de cada bloque
     private static final float MIN_RELACION = 1.05f; // ancho/alto mínimo (moto en dos renglones)
     private static final float MAX_RELACION = 5.5f;  // ancho/alto máximo
@@ -58,11 +59,16 @@ public final class DetectorPlaca {
 
     // memoria reutilizada entre cuadros (evita basura y gasto de batería)
     private int[] lum = new int[0];
+    private int[] dif = new int[0];       // diferencia de brillo horizontal/vertical entre vecinos
+    private byte[] cbA = new byte[0];
+    private byte[] crA = new byte[0];
     private byte[] clase = new byte[0];   // 1 = amarillo, 2 = blanco, 0 = otro
     private byte[] borde = new byte[0];   // 1 = trazo vertical
     private boolean[] texto = new boolean[0];
     private boolean[] puente = new boolean[0];
     private boolean[] visto = new boolean[0];
+    private int textoOscuro = 105;
+    private int textoBorde = 28;
 
     /**
      * @param y,u,v      planos del cuadro (formato YUV_420_888 de CameraX)
@@ -75,10 +81,33 @@ public final class DetectorPlaca {
     public Resultado detectar(ByteBuffer y, ByteBuffer u, ByteBuffer v,
                               int yFila, int uvFila, int uvPaso,
                               int ancho, int alto, int rotacion) {
+        return detectar(y, u, v, yFila, uvFila, uvPaso, ancho, alto, rotacion, true);
+    }
+
+    /**
+     * @param probarFina false = solo la escala gruesa (mitad de costo). La cámara alterna: un cuadro sí y otro no
+     *                   prueba también la escala fina, que es la que cuesta más y solo sirve para placas lejanas.
+     */
+    public Resultado detectar(ByteBuffer y, ByteBuffer u, ByteBuffer v,
+                              int yFila, int uvFila, int uvPaso,
+                              int ancho, int alto, int rotacion, boolean probarFina) {
+        final int lado = Math.max(ancho, alto);
+        // Escala gruesa: placas medianas y grandes (los bloques son más anchos que el grosor de los trazos).
+        Resultado r = detectarEn(y, u, v, yFila, uvFila, uvPaso, ancho, alto, rotacion, Math.max(2, Math.round(lado / 400f)));
+        if (r != null) return r;
+        // Escala fina: placas pequeñas o lejanas (y motos), que en la escala gruesa quedan en 1–2 bloques.
+        if (!probarFina) return null;
+        int fino = Math.max(2, Math.round(lado / 800f));
+        if (fino >= Math.max(2, Math.round(lado / 400f))) return null;
+        return detectarEn(y, u, v, yFila, uvFila, uvPaso, ancho, alto, rotacion, fino);
+    }
+
+    private Resultado detectarEn(ByteBuffer y, ByteBuffer u, ByteBuffer v,
+                                 int yFila, int uvFila, int uvPaso,
+                                 int ancho, int alto, int rotacion, int paso) {
         final boolean giro = rotacion == 90 || rotacion == 270;
         final int uw = giro ? alto : ancho;
         final int uh = giro ? ancho : alto;
-        final int paso = Math.max(2, Math.round(Math.max(uw, uh) / 400f));
         final int gw = uw / paso, gh = uh / paso;
         if (gw < BLOQUE * 3 || gh < BLOQUE * 2) return null;
         preparar(gw * gh);
@@ -107,30 +136,63 @@ public final class DetectorPlaca {
                 final int ya = pa < ylim ? y.get(pa) & 0xFF : yy;
                 final int yb = pb < ylim ? y.get(pb) & 0xFF : yy;
                 lum[i] = yy;
-                borde[i] = (byte) (Math.abs(ya - yb) >= UMBRAL_BORDE ? 1 : 0);
+                dif[i] = Math.abs(ya - yb);
 
                 final int pc = (by >> 1) * uvFila + (bx >> 1) * uvPaso;
-                final int cb = (pc < ulim ? u.get(pc) & 0xFF : 128) - 128;
-                final int cr = (pc < vlim ? v.get(pc) & 0xFF : 128) - 128;
-                byte c = 0;
-                if (yy > 90 && cb < -28 && cr > 6 && cr < 75) c = 1;                  // amarillo
-                else if (yy >= BLANCO_MIN && Math.abs(cb) < 20 && Math.abs(cr) < 20) c = 2; // blanco
-                clase[i] = c;
+                cbA[i] = (byte) ((pc < ulim ? u.get(pc) & 0xFF : 128) - 128);
+                crA[i] = (byte) ((pc < vlim ? v.get(pc) & 0xFF : 128) - 128);
             }
         }
+
+        // ---- 1b) Umbrales según la luz de la escena (percentil 96 del brillo)
+        final int[] hist = new int[256];
+        for (int i = 0; i < gw * gh; i++) hist[lum[i]]++;
+        int acum = 0, p90 = 255; // (p90 = brillo alto de la escena; incluye la placa si es lo bastante grande)
+        final int objetivo = (int) (gw * gh * 0.96f);
+        for (int i = 0; i < 256; i++) {
+            acum += hist[i];
+            if (acum >= objetivo) { p90 = i; break; }
+        }
+        final int umbralBorde = clampI((int) (p90 * 0.14f), BORDE_MIN, BORDE_MAX);
+        final int oscuro = clampI((int) (p90 * 0.45f), OSCURO_MIN, OSCURO_MAX);
+        final int claro = clampI((int) (p90 * 0.52f), CLARO_MIN, CLARO_MAX);
+        final int amarilloMin = Math.max(40, (int) (claro * 0.72f));
+        for (int i = 0; i < gw * gh; i++) {
+            final int yy = lum[i];
+            final int cb = cbA[i], cr = crA[i];
+            borde[i] = (byte) (dif[i] >= umbralBorde ? 1 : 0);
+            byte c = 0;
+            if (yy > amarilloMin && cb < -14 && cr > 4 && cr < 100) c = 1;                   // amarillo
+            else if (yy >= claro && Math.abs(cb) < 22 && Math.abs(cr) < 22) c = 2;          // blanco
+            clase[i] = c;
+        }
+        textoOscuro = oscuro;
+        textoBorde = umbralBorde;
 
         // ---- 2) Bloques con pinta de "caracteres sobre fondo de placa"
         final int bw = gw / BLOQUE, bh = gh / BLOQUE;
         for (int by = 0; by < bh; by++) {
             for (int bx = 0; bx < bw; bx++) {
                 int bordes = 0, oscuros = 0, fondo = 0, n = 0;
+                // Brillo más claro y más oscuro del bloque: la tinta es lo oscuro RELATIVO al fondo de la placa
+                int lmin = 255, lmax = 0;
+                for (int j = 0; j < BLOQUE; j++) {
+                    int fila = (by * BLOQUE + j) * gw + bx * BLOQUE;
+                    for (int k = 0; k < BLOQUE; k++) {
+                        int l = lum[fila + k];
+                        if (l < lmin) lmin = l;
+                        if (l > lmax) lmax = l;
+                    }
+                }
+                final boolean contrasteFuerte = lmax - lmin >= 3 * textoBorde;
+                final int corte = lmin + (int) ((lmax - lmin) * 0.45f);
                 for (int j = 0; j < BLOQUE; j++) {
                     int fila = (by * BLOQUE + j) * gw + bx * BLOQUE;
                     for (int k = 0; k < BLOQUE; k++) {
                         int i = fila + k;
                         n++;
                         bordes += borde[i];
-                        if (lum[i] < OSCURO) oscuros++;
+                        if (lum[i] < textoOscuro || (contrasteFuerte && lum[i] < corte)) oscuros++;
                         else if (clase[i] != 0) fondo++;
                     }
                 }
@@ -268,6 +330,47 @@ public final class DetectorPlaca {
         return px;
     }
 
+    /**
+     * Igual que {@link #recortar} pero solo el brillo (0..255): mucho más rápido, para medir y para el OCR.
+     * @param paso toma un píxel de cada «paso» (1 = sin reducir) para no pasarle imágenes enormes al OCR
+     * @return arreglo de ((der-izq)/paso) * ((aba-arr)/paso) brillos; el tamaño lo da {@link #tamanoRecorte}
+     */
+    public static int[] recortarGris(ByteBuffer y, int yFila, int ancho, int alto, int rotacion,
+                                     int izq, int arr, int der, int aba, int paso) {
+        final int k = Math.max(1, paso);
+        final int w = Math.max(1, (der - izq) / k), h = Math.max(1, (aba - arr) / k);
+        final int[] g = new int[w * h];
+        final int ylim = y.limit();
+        for (int j = 0; j < h; j++) {
+            final int uy = arr + j * k;
+            for (int i = 0; i < w; i++) {
+                final int ux = izq + i * k;
+                int bx, by;
+                switch (rotacion) {
+                    case 90:  bx = uy;             by = alto - 1 - ux; break;
+                    case 180: bx = ancho - 1 - ux; by = alto - 1 - uy; break;
+                    case 270: bx = ancho - 1 - uy; by = ux; break;
+                    default:  bx = ux;             by = uy; break;
+                }
+                bx = clamp(bx, ancho);
+                by = clamp(by, alto);
+                final int p = by * yFila + bx;
+                g[j * w + i] = p < ylim ? y.get(p) & 0xFF : 0;
+            }
+        }
+        return g;
+    }
+
+    /** Ancho y alto (en ese orden) que tendrá el resultado de {@link #recortarGris} con esos mismos límites. */
+    public static int[] tamanoRecorte(int izq, int arr, int der, int aba, int paso) {
+        final int k = Math.max(1, paso);
+        return new int[]{Math.max(1, (der - izq) / k), Math.max(1, (aba - arr) / k)};
+    }
+
+    private static int clampI(int v, int min, int max) {
+        return v < min ? min : (v > max ? max : v);
+    }
+
     private static int clamp(int v, int max) {
         return v < 0 ? 0 : (v >= max ? max - 1 : v);
     }
@@ -275,6 +378,9 @@ public final class DetectorPlaca {
     private void preparar(int celdas) {
         if (lum.length < celdas) {
             lum = new int[celdas];
+            dif = new int[celdas];
+            cbA = new byte[celdas];
+            crA = new byte[celdas];
             clase = new byte[celdas];
             borde = new byte[celdas];
         }

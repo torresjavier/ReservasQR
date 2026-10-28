@@ -12,8 +12,8 @@ android {
         // Android 7.0 o superior (los equipos Sunmi V2 / P2 traen Android 7.1 u 11)
         minSdk = 24
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
     }
 
     buildTypes {

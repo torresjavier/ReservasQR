@@ -8,6 +8,9 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.PointF
 import android.graphics.Rect
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraMetadata
+import android.hardware.camera2.CaptureRequest
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -15,20 +18,25 @@ import android.os.Looper
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.util.Range
 import android.util.Size
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -50,19 +58,24 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Cámara que lee SOLO placas (amarillas o blancas, de carro o de moto) y trabaja según el modo del equipo:
  *  - VÍA: valida el acceso sin detener el vehículo (vibra y sigue).
  *  - INTERIOR: registra el ingreso, toma la foto e imprime el ticket.
  *
- * Cómo ahorra batería y evita confundirse:
- *  1. Un detector liviano busca una zona con forma y color de placa. Si no hay placa a la vista NO se usa el OCR.
- *  2. Cuando hay placa, la cámara se enfoca en ella y el OCR lee solo ese recorte (no toda la escena).
- *  3. Sin placa por 20 segundos, entra en modo ahorro: casi no procesa cuadros y baja el brillo.
- *     Se despierta sola cuando aparece una placa, o al tocar la pantalla.
+ * Cómo lee (varias técnicas a la vez, de la más barata a la más pesada):
+ *  1. ZONA DE LECTURA fija (recuadro punteado): el foco y la luz se miden ahí y se lee solo lo que cae adentro.
+ *  2. Un detector liviano busca la placa por color y forma en toda la imagen. Si la ve, se lee solo ese recorte, ampliado.
+ *  3. Si no se logra leer, cada cuadro prueba una versión distinta de la imagen (más contraste, blanco y negro,
+ *     afilado contra el movimiento) hasta que alguna se lee bien.
+ *  4. Varios cuadros votan: carácter por carácter gana el más repetido, y pesan más los cuadros nítidos.
+ *  5. Con el vehículo en movimiento: escena de acción / obturador rápido, y se descartan los cuadros movidos.
+ *  6. Sin placa por 20 segundos: modo ahorro (casi no procesa y baja el brillo).
  */
 class PlacaActivity : AppCompatActivity() {
 
@@ -78,13 +91,58 @@ class PlacaActivity : AppCompatActivity() {
         /** Una zona que parece placa pero nunca se lee se ignora un rato (letreros amarillos, por ejemplo). */
         private const val FALLOS_PARA_IGNORAR = 12
         private const val IGNORAR_MS = 6_000L
+
+        /** Tiempo mínimo entre cuadros según la energía. Con placa a la vista se trabaja a toda velocidad. */
+        private const val HUECO_ACTIVO = 0L
+        private const val HUECO_ESPERA = 90L
+        private const val HUECO_AHORRO = 700L
+        /** Tiempo mínimo entre lecturas de texto (OCR) cuando no se ve una placa clara. */
+        private const val OCR_CADA_ESPERA = 260L
+        private const val OCR_CADA_AHORRO = 1_500L
+
+        /** Zona fija de lectura, como fracción del cuadro ya derecho. */
+        private const val ZONA_X0 = 0.04f
+        private const val ZONA_X1 = 0.96f
+        private const val ZONA_Y0 = 0.30f
+        private const val ZONA_Y1 = 0.62f
+
+        /** Un recorte de placa más borroso que esto se descarta (salvo que lleve varios descartados seguidos). */
+        private const val NITIDEZ_MIN = 0.16f
+        private const val MAX_SALTADOS = 3
+        /** Contraste mínimo de la zona para gastar un OCR en ella. */
+        private const val CONTRASTE_MIN = 28
+
+        /** Peso de votos necesario: lectura limpia que coincide exacto / lectura corregida / aviso de «sin reserva». */
+        private const val PESO_EXACTA = 0.9f
+        private const val PESO_CORREGIDA = 1.3f
+        private const val PESO_ALERTA = 1.8f
+
+        private val ZOOMS = floatArrayOf(1f, 1.5f, 2f, 3f)
+        private val FOCOS = intArrayOf(0, 70, 120, 200, 400)
     }
 
     private enum class Tipo { OK, VIP, REPETIDO, ALERTA }
     private enum class Energia { ACTIVO, ESPERA, AHORRO }
 
+    /** Lo que se mandó al OCR en un cuadro, para entender después lo que devolvió. */
+    private class Pase(
+        val zona: Rect,                                 // zona del cuadro derecho que se leyó
+        val paso: Int,                                  // reducción aplicada al recortar (1 = ninguna)
+        val escala: Float,                              // ampliación aplicada antes del OCR
+        val detectada: DetectorPlaca.Resultado?,        // placa que encontró el detector (si fue la que se leyó)
+        val gris: IntArray,                             // recorte en brillos, sin ampliar
+        val gw: Int,
+        val gh: Int,
+        val nitidez: Float                              // nitidez del recorte (−1 si no se midió)
+    )
+
+    private class Cand(val texto: String, val caja: Rect?)
+    private class Hallazgo(val lec: OcrPlaca.Lectura, val caja: Rect?)
+
     private lateinit var vista: PreviewView
+    private lateinit var zonaView: View
     private lateinit var marco: View
+    private lateinit var imgCrop: ImageView
     private lateinit var txtLeida: TextView
     private lateinit var txtEstado: TextView
     private lateinit var txtSesion: TextView
@@ -93,6 +151,11 @@ class PlacaActivity : AppCompatActivity() {
     private lateinit var avisoTitulo: TextView
     private lateinit var avisoPlaca: TextView
     private lateinit var avisoDetalle: TextView
+    private lateinit var opMetodo: TextView
+    private lateinit var opZoom: TextView
+    private lateinit var opFoco: TextView
+    private lateinit var opMovimiento: TextView
+    private lateinit var opResolucion: TextView
 
     private var camara: Camera? = null
     private var linterna = false
@@ -102,30 +165,52 @@ class PlacaActivity : AppCompatActivity() {
     private val main = Handler(Looper.getMainLooper())
     private val hora = SimpleDateFormat("hh:mm a", Locale("es", "CO"))
 
+    // ---- opciones elegidas por el operador (se guardan en Ajustes)
+    @Volatile private var metodo = 0        // 0 automático, 1 zona fija, 2 toda la imagen
+    private var zoom = 1f
+    private var focoCm = 0
+    @Volatile private var movimiento = 1    // 0 normal, 1 rápido, 2 obturador manual
+    private var altaRes = true
+
+    // ---- exposición manual (solo con movimiento = 2)
+    private var manualPosible = false
+    private var expNs = 3_000_000L
+    private var iso = 400
+    private var expMin = 500_000L
+    private var expMax = 12_000_000L
+    private var isoMin = 100
+    private var isoMax = 1600
+    private var ultimoAjusteExp = 0L
+
     // ---- estado del hilo de análisis
     @Volatile private var energia = Energia.ESPERA
     @Volatile private var ultimoCuadro = 0L
     @Volatile private var ultimaPlacaVista = SystemClock.elapsedRealtime()
     @Volatile private var lecturaCompletaHasta = 0L
-    private var ultimoEnfoque = 0L
-    private var enfoqueX = -1f
-    private var enfoqueY = -1f
-    private var zoomActual = 1f
+    @Volatile private var indicioHasta = 0L
+    @Volatile private var frameW = 0
+    @Volatile private var frameH = 0
+    @Volatile private var sinLecturaSeguidas = 0
+    private var contador = 0
+    private var ultimoOcr = 0L
+    private var saltados = 0
+    private var ultimaMiniatura = 0L
     private var textoUi = ""
     private var ultimoTextoUi = 0L
 
     // ---- zonas que parecen placa pero no se leen
     private var fallos = 0
+    private var fallosDet = 0
     private var zonaIgnorada: Rect? = null
     private var ignoradaHasta = 0L
 
-    /** placa → hasta cuándo se ignora */
+    // ---- lecturas (hilo principal)
+    /** placa (forma canónica) → hasta cuándo se ignora */
     private val enfriamiento = HashMap<String, Long>()
-    private var candidata: String? = null
-    private var vecesCandidata = 0
-    private var candidataT = 0L
+    private val voto = VotoPlacas(2_500L)
     private var sesion = 0
     private var ultimaLectura: String? = null
+    private var ultimaPista: OcrPlaca.Tipo? = null
     private val ocultarAviso = Runnable { panelAviso.visibility = View.GONE }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -139,7 +224,9 @@ class PlacaActivity : AppCompatActivity() {
         Operacion.iniciar(this)
 
         vista = findViewById(R.id.vistaCamara)
+        zonaView = findViewById(R.id.zonaLectura)
         marco = findViewById(R.id.marco)
+        imgCrop = findViewById(R.id.imgCrop)
         txtLeida = findViewById(R.id.txtLeida)
         txtEstado = findViewById(R.id.txtEstadoOcr)
         txtSesion = findViewById(R.id.txtSesion)
@@ -148,7 +235,20 @@ class PlacaActivity : AppCompatActivity() {
         avisoTitulo = findViewById(R.id.avisoTitulo)
         avisoPlaca = findViewById(R.id.avisoPlaca)
         avisoDetalle = findViewById(R.id.avisoDetalle)
+        opMetodo = findViewById(R.id.opMetodo)
+        opZoom = findViewById(R.id.opZoom)
+        opFoco = findViewById(R.id.opFoco)
+        opMovimiento = findViewById(R.id.opMovimiento)
+        opResolucion = findViewById(R.id.opResolucion)
         txtModoCamara.text = Operacion.descripcionModo()
+
+        val aj = Operacion.ajustes
+        metodo = aj.metodoPlaca
+        zoom = aj.zoomPlaca
+        focoCm = aj.focoPlacaCm
+        movimiento = aj.movimientoPlaca
+        altaRes = aj.altaResolucion
+        refrescarOpciones()
 
         val arriba = findViewById<View>(R.id.panelArriba)
         val abajo = findViewById<View>(R.id.panelAbajo)
@@ -160,6 +260,7 @@ class PlacaActivity : AppCompatActivity() {
             abajo.setPadding(abajo.paddingLeft, abajo.paddingTop, abajo.paddingRight, padAbajo + b.bottom)
             insets
         }
+        vista.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> posicionarZona() }
 
         findViewById<Button>(R.id.btnTerminar).setOnClickListener { finish() }
         findViewById<Button>(R.id.btnLinterna).setOnClickListener { cambiarLinterna() }
@@ -168,7 +269,7 @@ class PlacaActivity : AppCompatActivity() {
             finish()
         }
         panelAviso.setOnClickListener { panelAviso.visibility = View.GONE }
-        // Tocar la cámara: despierta del modo ahorro o, si no se detecta la placa sola, fuerza una lectura completa de 3 s
+        // Tocar la cámara: despierta del modo ahorro o, si no se lee sola, fuerza una lectura de toda la imagen por 3 s
         vista.setOnClickListener {
             if (energia == Energia.AHORRO) {
                 despertar()
@@ -176,6 +277,56 @@ class PlacaActivity : AppCompatActivity() {
                 lecturaCompletaHasta = SystemClock.elapsedRealtime() + 3_000L
                 mostrarEstado("Leyendo toda la imagen…", true)
             }
+            enfocarZona()
+        }
+
+        opMetodo.setOnClickListener {
+            metodo = (metodo + 1) % 3
+            Operacion.ajustes.metodoPlaca = metodo
+            reiniciarLectura()
+            refrescarOpciones()
+            posicionarZona()
+            mostrarEstado(
+                when (metodo) {
+                    0 -> "Automático: busca la placa en toda la imagen y también en el recuadro"
+                    1 -> "Zona fija: lee solo lo que está dentro del recuadro punteado"
+                    else -> "Toda la imagen: busca texto de placa en cualquier parte"
+                }, true
+            )
+        }
+        opZoom.setOnClickListener {
+            val i = ZOOMS.indexOfFirst { abs(it - zoom) < 0.05f }
+            zoom = ZOOMS[(i + 1) % ZOOMS.size]
+            Operacion.ajustes.zoomPlaca = zoom
+            aplicarZoom()
+            refrescarOpciones()
+            enfocarZona()
+        }
+        opFoco.setOnClickListener {
+            val i = FOCOS.indexOf(focoCm)
+            focoCm = FOCOS[(i + 1) % FOCOS.size]
+            Operacion.ajustes.focoPlacaCm = focoCm
+            aplicarOpcionesCamara()
+            refrescarOpciones()
+            enfocarZona()
+            if (focoCm > 0) mostrarEstado("Foco fijo a ${textoDistancia(focoCm)}: ponga la placa a esa distancia", true)
+        }
+        opMovimiento.setOnClickListener {
+            var m = (movimiento + 1) % 3
+            if (m == 2 && !manualPosible) {
+                Toast.makeText(this, "Este equipo no permite obturador manual.", Toast.LENGTH_SHORT).show()
+                m = 0
+            }
+            movimiento = m
+            Operacion.ajustes.movimientoPlaca = m
+            aplicarOpcionesCamara()
+            refrescarOpciones()
+        }
+        opResolucion.setOnClickListener {
+            altaRes = !altaRes
+            Operacion.ajustes.altaResolucion = altaRes
+            refrescarOpciones()
+            iniciarCamara()
         }
 
         hilo = Executors.newSingleThreadExecutor()
@@ -201,6 +352,8 @@ class PlacaActivity : AppCompatActivity() {
         reconocedor.close()
     }
 
+    // ---------------------------------------------------------------- cámara
+
     private fun iniciarCamara() {
         val futuro = ProcessCameraProvider.getInstance(this)
         futuro.addListener({
@@ -211,11 +364,10 @@ class PlacaActivity : AppCompatActivity() {
                 val selectorPrevia = ResolutionSelector.Builder().setAspectRatioStrategy(proporcion).build()
                 val previa = Preview.Builder().setResolutionSelector(selectorPrevia).build()
                 previa.setSurfaceProvider(vista.surfaceProvider)
+                val tam = if (altaRes) Size(1920, 1080) else Size(1280, 720)
                 val selector = ResolutionSelector.Builder()
                     .setAspectRatioStrategy(proporcion)
-                    .setResolutionStrategy(
-                        ResolutionStrategy(Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
-                    )
+                    .setResolutionStrategy(ResolutionStrategy(tam, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
                     .build()
                 val analisis = ImageAnalysis.Builder()
                     .setResolutionSelector(selector)
@@ -225,85 +377,356 @@ class PlacaActivity : AppCompatActivity() {
                 proveedor.unbindAll()
                 camara = proveedor.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, previa, analisis)
                 ultimaPlacaVista = SystemClock.elapsedRealtime()
-                mostrarEstado("Apunte a la placa", true)
+                frameW = 0
+                frameH = 0
+                revisarCapacidades()
+                aplicarZoom()
+                aplicarOpcionesCamara()
+                refrescarOpciones()
+                main.postDelayed({ enfocarZona() }, 700L)
+                mostrarEstado("Ponga la placa dentro del recuadro", true)
             } catch (e: Exception) {
                 txtEstado.text = "No se pudo abrir la cámara: ${e.message}"
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
+    /** Qué permite esta cámara: obturador manual y su rango de exposición y sensibilidad. */
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    private fun revisarCapacidades() {
+        manualPosible = false
+        val c = camara ?: return
+        try {
+            val info = Camera2CameraInfo.from(c.cameraInfo)
+            val capacidades = info.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            val rangoExp = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+            val rangoIso = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+            if (capacidades != null && rangoExp != null && rangoIso != null &&
+                capacidades.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
+            ) {
+                expMin = max(rangoExp.lower, 500_000L)
+                expMax = min(rangoExp.upper, 12_000_000L)
+                isoMin = max(rangoIso.lower, 100)
+                isoMax = min(rangoIso.upper, 1600)
+                if (expMin < expMax && isoMin < isoMax) {
+                    expNs = expNs.coerceIn(expMin, expMax)
+                    iso = iso.coerceIn(isoMin, isoMax)
+                    manualPosible = true
+                }
+            }
+        } catch (_: Exception) {
+        }
+        if (movimiento == 2 && !manualPosible) {
+            movimiento = 1
+            Operacion.ajustes.movimientoPlaca = 1
+        }
+    }
+
+    /**
+     * Foco fijo, vehículo en movimiento (escena de acción, más cuadros por segundo u obturador manual).
+     * Se manda siempre el conjunto completo de opciones: lo que no se pide vuelve al modo automático.
+     */
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    private fun aplicarOpcionesCamara() {
+        val c = camara ?: return
+        try {
+            val info = Camera2CameraInfo.from(c.cameraInfo)
+            val b = CaptureRequestOptions.Builder()
+            val mov = if (movimiento == 2 && !manualPosible) 1 else movimiento
+
+            // Foco a una distancia fija (el lente no tiene que buscar: ideal con vehículos pasando)
+            val minFoco = info.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+            if (focoCm > 0 && minFoco > 0f) {
+                val dioptrias = (100f / focoCm).coerceIn(0f, minFoco)
+                b.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
+                b.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, dioptrias)
+            }
+
+            if (mov >= 1) {
+                // Más cuadros por segundo = exposición más corta = menos movimiento borroso
+                val rangos = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                val mejor = rangos?.filter { it.upper in 24..60 }
+                    ?.maxWithOrNull(compareBy<Range<Int>> { it.upper }.thenBy { it.lower })
+                if (mejor != null) b.setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, mejor)
+                if (mov == 1) {
+                    val escenas = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
+                    if (escenas != null && escenas.contains(CameraMetadata.CONTROL_SCENE_MODE_SPORTS)) {
+                        b.setCaptureRequestOption(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_USE_SCENE_MODE)
+                        b.setCaptureRequestOption(CaptureRequest.CONTROL_SCENE_MODE, CameraMetadata.CONTROL_SCENE_MODE_SPORTS)
+                    }
+                } else {
+                    b.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+                    b.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, expNs)
+                    b.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
+                }
+            }
+            Camera2CameraControl.from(c.cameraControl).setCaptureRequestOptions(b.build())
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun aplicarZoom() {
+        val c = camara ?: return
+        try {
+            val estado = c.cameraInfo.zoomState.value
+            val minimo = estado?.minZoomRatio ?: 1f
+            val maximo = estado?.maxZoomRatio ?: 1f
+            c.cameraControl.setZoomRatio(zoom.coerceIn(minimo, max(minimo, maximo)))
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Foco y luz medidos en el centro de la zona de lectura. Se queda ahí (no salta de un lado a otro). */
+    private fun enfocarZona() {
+        val c = camara ?: return
+        try {
+            if (vista.width <= 0 || vista.height <= 0) return
+            val lp = zonaView.layoutParams as FrameLayout.LayoutParams
+            val cx = if (zonaView.visibility == View.VISIBLE && lp.width > 0) lp.leftMargin + lp.width / 2f else vista.width / 2f
+            val cy = if (zonaView.visibility == View.VISIBLE && lp.height > 0) lp.topMargin + lp.height / 2f else vista.height / 2f
+            val punto = vista.meteringPointFactory.createPoint(cx, cy)
+            val banderas = if (focoCm > 0) FocusMeteringAction.FLAG_AE else FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+            val accion = FocusMeteringAction.Builder(punto, banderas).disableAutoCancel().build()
+            c.cameraControl.startFocusAndMetering(accion)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Con obturador manual: sube o baja la sensibilidad y el tiempo de exposición según la luz del centro de la imagen. */
+    private fun ajustarExposicion(plano: ImageProxy.PlaneProxy, ancho: Int, alto: Int, t: Long) {
+        if (t - ultimoAjusteExp < 350L) return
+        ultimoAjusteExp = t
+        val buf = plano.buffer
+        val fila = plano.rowStride
+        var suma = 0L
+        var n = 0
+        var yy = alto / 5
+        while (yy < alto * 4 / 5) {
+            var xx = ancho / 5
+            val base = yy * fila
+            while (xx < ancho * 4 / 5) {
+                suma += (buf.get(base + xx).toInt() and 0xFF)
+                n++
+                xx += 12
+            }
+            yy += 12
+        }
+        if (n == 0) return
+        val media = (suma / n).toInt()
+        var cambio = false
+        if (media < 85) {
+            if (iso < isoMax) {
+                iso = min(isoMax, (iso * 1.4f).toInt() + 1)
+                cambio = true
+            } else if (expNs < expMax) {
+                expNs = min(expMax, (expNs * 1.35f).toLong())
+                cambio = true
+            }
+        } else if (media > 175) {
+            if (iso > isoMin) {
+                iso = max(isoMin, (iso / 1.4f).toInt())
+                cambio = true
+            } else if (expNs > expMin) {
+                expNs = max(expMin, (expNs / 1.35f).toLong())
+                cambio = true
+            }
+        }
+        if (cambio) main.post { aplicarOpcionesCamara() }
+    }
+
+    private fun reiniciarLectura() {
+        voto.limpiar()
+        sinLecturaSeguidas = 0
+        fallos = 0
+        fallosDet = 0
+        zonaIgnorada = null
+        indicioHasta = 0L
+        mostrar(null)
+    }
+
     // ---------------------------------------------------------------- análisis de cada cuadro (hilo aparte)
 
-    @androidx.annotation.OptIn(ExperimentalGetImage::class)
     private fun analizar(proxy: ImageProxy) {
         if (isFinishing) {
             proxy.close(); return
         }
         val t = SystemClock.elapsedRealtime()
-        // Menos cuadros cuanto menos pasa: 8 por segundo con placa, ~14 buscándola, 1-2 en ahorro
+        // Con placa a la vista se trabaja a toda velocidad; sin placa, pocos cuadros por segundo
         val hueco = when (energia) {
-            Energia.ACTIVO -> 110L
-            Energia.ESPERA -> 70L
-            Energia.AHORRO -> 650L
+            Energia.ACTIVO -> HUECO_ACTIVO
+            Energia.ESPERA -> HUECO_ESPERA
+            Energia.AHORRO -> HUECO_AHORRO
         }
         if (t - ultimoCuadro < hueco) {
             proxy.close(); return
         }
         ultimoCuadro = t
-
-        val completa = t < lecturaCompletaHasta
-        var placa: DetectorPlaca.Resultado? = null
+        var asincrono = false
         try {
-            val p = proxy.planes
-            placa = detector.detectar(
-                p[0].buffer, p[1].buffer, p[2].buffer,
-                p[0].rowStride, p[1].rowStride, p[1].pixelStride,
-                proxy.width, proxy.height, proxy.imageInfo.rotationDegrees
-            )
+            asincrono = procesarCuadro(proxy, t)
         } catch (_: Exception) {
         }
+        // Si se lanzó el OCR, el cuadro se cierra cuando el OCR termina
+        if (!asincrono) proxy.close()
+    }
 
-        // Una zona que ya se probó muchas veces sin éxito se ignora un rato
-        val ign = zonaIgnorada
-        if (placa != null && ign != null && t < ignoradaHasta &&
-            ign.contains(placa.centroX().toInt(), placa.centroY().toInt())
-        ) placa = null
-
-        if (placa == null && !completa) {
-            sinPlaca(t)
-            proxy.close()
-            return
+    /** @return true si se lanzó el OCR (entonces el cuadro se cierra al terminar él) */
+    private fun procesarCuadro(proxy: ImageProxy, t: Long): Boolean {
+        val p = proxy.planes
+        val ancho = proxy.width
+        val alto = proxy.height
+        val rot = proxy.imageInfo.rotationDegrees
+        val giro = rot == 90 || rot == 270
+        val uw = if (giro) alto else ancho
+        val uh = if (giro) ancho else alto
+        if (uw != frameW || uh != frameH) {
+            frameW = uw
+            frameH = uh
+            main.post { posicionarZona() }
         }
+        if (movimiento == 2 && manualPosible && energia != Energia.AHORRO) ajustarExposicion(p[0], ancho, alto, t)
 
-        if (placa != null) {
+        val forzada = t < lecturaCompletaHasta
+        val metodoAct = if (forzada) 2 else metodo
+        contador++
+
+        // 1) Detector de placa por color y forma (solo en automático)
+        var det: DetectorPlaca.Resultado? = null
+        if (metodoAct == 0) {
+            try {
+                det = detector.detectar(
+                    p[0].buffer, p[1].buffer, p[2].buffer,
+                    p[0].rowStride, p[1].rowStride, p[1].pixelStride,
+                    ancho, alto, rot, (contador and 1) == 0
+                )
+            } catch (_: Exception) {
+            }
+            val ign = zonaIgnorada
+            if (det != null && ign != null && t < ignoradaHasta && ign.contains(det.centroX().toInt(), det.centroY().toInt())) {
+                det = null
+            }
+        }
+        if (det != null) {
             ultimaPlacaVista = t
+            indicioHasta = t + 2_500L
             if (energia != Energia.ACTIVO) {
                 val estaba = energia
                 energia = Energia.ACTIVO
                 if (estaba == Energia.AHORRO) main.post { salirAhorro() }
             }
-            val r: DetectorPlaca.Resultado = placa
-            main.post {
-                moverMarco(r)
-                enfocar(r, t)
-                ajustarZoom(r)
+        }
+
+        // 2) Qué parte del cuadro se lee: el recorte de la placa detectada, la zona fija o toda la imagen
+        var usarDet = det != null && fallosDet < 3
+        if (det != null && !usarDet) {
+            fallosDet++
+            if (fallosDet >= 8) fallosDet = 0   // vuelve a probar con el recorte de la placa
+        }
+        val zona: Rect = when {
+            metodoAct == 2 -> Rect(0, 0, uw, uh)
+            usarDet && det != null -> ampliar(det, uw, uh)
+            else -> zonaFija(uw, uh)
+        }
+        if (det != null) {
+            val d: DetectorPlaca.Resultado = det
+            main.post { mostrar(Rect(d.izq, d.arr, d.der, d.aba)) }
+        }
+
+        // 3) Sin placa clara no se gasta OCR más que de vez en cuando
+        val cadaOcr = when (energia) {
+            Energia.ACTIVO -> 0L
+            Energia.ESPERA -> OCR_CADA_ESPERA
+            Energia.AHORRO -> OCR_CADA_AHORRO
+        }
+        if (!forzada && det == null && t - ultimoOcr < cadaOcr) {
+            sinPlaca(t)
+            return false
+        }
+
+        // 4) Recorte (solo brillos: rápido) y revisión de que haya algo que leer
+        val paso = max(1, ceil(max(zona.width(), zona.height()) / 1400f).toInt())
+        val tam = DetectorPlaca.tamanoRecorte(zona.left, zona.top, zona.right, zona.bottom, paso)
+        val gw = tam[0]
+        val gh = tam[1]
+        if (gw < 24 || gh < 24) return false
+        val gris = DetectorPlaca.recortarGris(
+            p[0].buffer, p[0].rowStride, ancho, alto, rot,
+            zona.left, zona.top, zona.right, zona.bottom, paso
+        )
+        if (!forzada && det == null) {
+            val contraste = ImagenPlaca.contraste(gris)
+            val brilloMedio = ImagenPlaca.brilloMedio(gris)
+            if (contraste < CONTRASTE_MIN || brilloMedio < 8 || brilloMedio > 250) {
+                sinPlaca(t)
+                return false
             }
         }
 
-        val recorte: Bitmap? = if (placa != null) recortar(proxy, placa) else null
-        val imagen = if (recorte != null) {
-            InputImage.fromBitmap(recorte, 0)
-        } else {
-            val media = proxy.image
-            if (media == null) {
-                proxy.close(); return
+        // Con el vehículo en movimiento muchos cuadros salen movidos: se descartan los más borrosos
+        var nit = -1f
+        if (usarDet) {
+            nit = ImagenPlaca.nitidez(gris, gw, gh)
+            if (nit < NITIDEZ_MIN && saltados < MAX_SALTADOS) {
+                saltados++
+                return false
             }
-            InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees)
+            saltados = 0
         }
-        val zona = placa
-        reconocedor.process(imagen)
-            .addOnSuccessListener { texto -> procesar(texto, proxy, zona) }
+
+        // 5) Imagen para el OCR: ampliada si es pequeña y, cuando no se logra leer, con una técnica distinta cada cuadro
+        val variante = if (t < indicioHasta && (contador and 1) == 1) {
+            1 + ((contador shr 1) % (ImagenPlaca.NUM_VARIANTES - 1))
+        } else {
+            0
+        }
+        var px = ImagenPlaca.aArgb(gris)
+        var bw = gw
+        var bh = gh
+        var escala = 1f
+        if (usarDet && det != null) {
+            val objetivo = if (det.relacion() < 1.6f) 520 else 640
+            if (gw < objetivo) {
+                escala = min(4f, objetivo.toFloat() / gw)
+                val pequena = Bitmap.createBitmap(px, gw, gh, Bitmap.Config.ARGB_8888)
+                val grande = Bitmap.createScaledBitmap(pequena, (gw * escala).toInt(), (gh * escala).toInt(), true)
+                bw = grande.width
+                bh = grande.height
+                px = IntArray(bw * bh)
+                grande.getPixels(px, 0, bw, 0, 0, bw, bh)
+            }
+        }
+        if (variante != 0) px = ImagenPlaca.variante(px, bw, bh, variante)
+        val bmp = Bitmap.createBitmap(px, bw, bh, Bitmap.Config.ARGB_8888)
+
+        if (t - ultimaMiniatura > 500L) {
+            ultimaMiniatura = t
+            try {
+                val mw = 192
+                val mh = max(1, (bh * (mw.toFloat() / bw)).toInt())
+                val mini = Bitmap.createScaledBitmap(bmp, mw, mh, true)
+                main.post { imgCrop.setImageBitmap(mini) }
+            } catch (_: Exception) {
+            }
+        }
+
+        // 6) OCR (último paso: de aquí en adelante el cuadro lo cierra el OCR al terminar)
+        ultimoOcr = t
+        val pase = Pase(zona, paso, escala, if (usarDet) det else null, gris, gw, gh, nit)
+        reconocedor.process(InputImage.fromBitmap(bmp, 0))
+            .addOnSuccessListener { texto -> alTexto(texto, proxy, pase) }
             .addOnCompleteListener { proxy.close() }
+        return true
+    }
+
+    /** Zona fija de lectura (el recuadro punteado), en píxeles del cuadro derecho. */
+    private fun zonaFija(uw: Int, uh: Int): Rect =
+        Rect((uw * ZONA_X0).toInt(), (uh * ZONA_Y0).toInt(), (uw * ZONA_X1).toInt(), (uh * ZONA_Y1).toInt())
+
+    /** La placa detectada con un margen, para no cortar letras en los bordes. */
+    private fun ampliar(r: DetectorPlaca.Resultado, uw: Int, uh: Int): Rect {
+        val mw = (r.ancho() * 0.12f).toInt()
+        val mh = (r.alto() * 0.25f).toInt()
+        return Rect(max(0, r.izq - mw), max(0, r.arr - mh), min(uw, r.der + mw), min(uh, r.aba + mh))
     }
 
     /** No hay placa a la vista: pasa de activo a espera y, si dura, a modo ahorro. */
@@ -314,148 +737,195 @@ class PlacaActivity : AppCompatActivity() {
             energia = Energia.AHORRO
             main.post { entrarAhorro() }
         }
-        if (sin > 3_500L) {
+        if (sin > 1_500L) {
             main.post {
-                moverMarco(null)
-                if (zoomActual > 1.05f) {
-                    camara?.cameraControl?.setZoomRatio(1f)
-                    zoomActual = 1f
-                }
+                mostrar(null)
                 if (energia != Energia.AHORRO) mostrarEstado("Buscando placa…", false)
             }
         }
     }
 
-    /** Recorte de la placa (con un poco de margen), agrandado si es pequeño, para que el OCR lea mejor. */
-    private fun recortar(proxy: ImageProxy, r: DetectorPlaca.Resultado): Bitmap? = try {
-        val mw = (r.ancho() * 0.10f).toInt()
-        val mh = (r.alto() * 0.18f).toInt()
-        val izq = maxOf(0, r.izq - mw)
-        val arr = maxOf(0, r.arr - mh)
-        val der = minOf(r.anchoCuadro, r.der + mw)
-        val aba = minOf(r.altoCuadro, r.aba + mh)
-        val w = der - izq
-        val h = aba - arr
-        if (w < 32 || h < 32) {
-            null
-        } else {
-            val p = proxy.planes
-            val px = DetectorPlaca.recortar(
-                p[0].buffer, p[1].buffer, p[2].buffer,
-                p[0].rowStride, p[1].rowStride, p[1].pixelStride,
-                proxy.width, proxy.height, proxy.imageInfo.rotationDegrees,
-                izq, arr, der, aba
-            )
-            var b = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
-            if (w < 420) {
-                val k = minOf(3f, 420f / w)
-                b = Bitmap.createScaledBitmap(b, (w * k).toInt(), (h * k).toInt(), true)
-            }
-            b
-        }
-    } catch (e: Exception) {
-        null
-    }
-
     // ---------------------------------------------------------------- lectura del texto (hilo principal)
 
-    private fun candidatos(texto: Text): Pair<List<String>, Boolean> {
+    private fun unir(a: Rect?, b: Rect?): Rect? {
+        if (a == null) return b
+        if (b == null) return a
+        return Rect(min(a.left, b.left), min(a.top, b.top), max(a.right, b.right), max(a.bottom, b.bottom))
+    }
+
+    private fun candidatos(texto: Text): Pair<List<Cand>, Boolean> {
         val lineas = texto.textBlocks.flatMap { it.lines }
             .filter { Listado.normPlaca(it.text).length >= 2 }
             .sortedBy { it.boundingBox?.top ?: 0 }
-        val salida = ArrayList<String>()
-        lineas.forEach { salida.add(it.text) }
+        val salida = ArrayList<Cand>()
+        lineas.forEach { salida.add(Cand(it.text, it.boundingBox)) }
         var dos = false
         // Las placas de moto traen las letras arriba y los números abajo: se unen los renglones apilados
         for (i in 0 until lineas.size - 1) {
             val a = lineas[i].boundingBox
             val b = lineas[i + 1].boundingBox
             if (a == null || b == null) continue
-            val solape = minOf(a.right, b.right) - maxOf(a.left, b.left)
-            val ancho = minOf(a.width(), b.width())
+            val solape = min(a.right, b.right) - max(a.left, b.left)
+            val ancho = min(a.width(), b.width())
             if (b.top >= a.centerY() && ancho > 0 && solape > ancho * 0.4f) {
-                salida.add(lineas[i].text + " " + lineas[i + 1].text)
+                salida.add(Cand(lineas[i].text + " " + lineas[i + 1].text, unir(a, b)))
                 val na = Listado.normPlaca(lineas[i].text).length
                 val nb = Listado.normPlaca(lineas[i + 1].text).length
                 if (na in 2..4 && nb in 2..4) dos = true
             }
         }
-        if (lineas.size in 2..3) salida.add(lineas.joinToString(" ") { it.text })
+        if (lineas.size in 2..3) {
+            var u: Rect? = null
+            lineas.forEach { u = unir(u, it.boundingBox) }
+            salida.add(Cand(lineas.joinToString(" ") { it.text }, u))
+        }
         return salida to dos
     }
 
-    /** Se ejecuta en el hilo principal con cada recorte leído. */
-    private fun procesar(texto: Text, proxy: ImageProxy, zona: DetectorPlaca.Resultado?) {
-        val l = Operacion.listado ?: return
-        val (cands, dosRenglones) = candidatos(texto)
-        val pista: OcrPlaca.Tipo? = if (zona != null) OcrPlaca.tipoPorForma(zona.relacion(), dosRenglones) else null
-        val lecturas = cands.flatMap { OcrPlaca.lecturas(it, pista, dosRenglones) }.distinctBy { it.placa }
-        val ahora = System.currentTimeMillis()
+    /** Hay texto con pinta de placa a medias (letras y números mezclados) aunque no se haya podido leer completa. */
+    private fun hayIndicio(cands: List<Cand>): Boolean = cands.any {
+        val n = Listado.normPlaca(it.texto)
+        n.length >= 4 && n.any { c -> c.isDigit() } && n.any { c -> c.isLetter() }
+    }
 
-        if (lecturas.isEmpty()) {
-            if (zona != null) {
+    /** Nitidez del renglón leído (recorte del recorte); pesa más una lectura de una imagen enfocada. */
+    private fun calidad(pase: Pase, caja: Rect?): Float {
+        var nit = pase.nitidez
+        if (caja != null && pase.escala > 0f) {
+            val x0 = (caja.left / pase.escala).toInt().coerceIn(0, pase.gw - 1)
+            val y0 = (caja.top / pase.escala).toInt().coerceIn(0, pase.gh - 1)
+            val x1 = (caja.right / pase.escala).toInt().coerceIn(x0 + 1, pase.gw)
+            val y1 = (caja.bottom / pase.escala).toInt().coerceIn(y0 + 1, pase.gh)
+            val w = x1 - x0
+            val h = y1 - y0
+            if (w >= 24 && h >= 14) {
+                val sub = IntArray(w * h)
+                for (j in 0 until h) System.arraycopy(pase.gris, (y0 + j) * pase.gw + x0, sub, j * w, w)
+                nit = ImagenPlaca.nitidez(sub, w, h)
+            }
+        }
+        if (nit < 0f) nit = 0.6f
+        return (nit * 1.5f).coerceIn(0.3f, 1.3f)
+    }
+
+    /** Pasa un rectángulo del OCR (en píxeles de la imagen que se le dio) al cuadro derecho. */
+    private fun aCuadro(caja: Rect, pase: Pase): Rect {
+        val k = pase.paso / pase.escala
+        return Rect(
+            pase.zona.left + (caja.left * k).toInt(), pase.zona.top + (caja.top * k).toInt(),
+            pase.zona.left + (caja.right * k).toInt(), pase.zona.top + (caja.bottom * k).toInt()
+        )
+    }
+
+    /** Se ejecuta en el hilo principal con cada imagen leída. */
+    private fun alTexto(texto: Text, proxy: ImageProxy, pase: Pase) {
+        val l = Operacion.listado ?: return
+        val ahora = SystemClock.elapsedRealtime()
+        val (cands, dosRenglones) = candidatos(texto)
+        val det = pase.detectada
+        val pista: OcrPlaca.Tipo? = when {
+            dosRenglones -> OcrPlaca.Tipo.MOTO
+            det != null -> OcrPlaca.tipoPorForma(det.relacion(), false)
+            else -> null
+        }
+        ultimaPista = pista
+        val hallazgos = cands.flatMap { c -> OcrPlaca.lecturas(c.texto, pista, dosRenglones).map { Hallazgo(it, c.caja) } }
+            .distinctBy { it.lec.placa }
+
+        if (hallazgos.isEmpty()) {
+            sinLecturaSeguidas++
+            if (hayIndicio(cands)) indicioHasta = ahora + 2_500L
+            if (det != null) {
                 fallos++
                 if (fallos >= FALLOS_PARA_IGNORAR) {
                     fallos = 0
-                    val m = zona.ancho() / 6
-                    zonaIgnorada = Rect(zona.izq - m, zona.arr - m, zona.der + m, zona.aba + m)
-                    ignoradaHasta = SystemClock.elapsedRealtime() + IGNORAR_MS
+                    val m = det.ancho() / 6
+                    zonaIgnorada = Rect(det.izq - m, det.arr - m, det.der + m, det.aba + m)
+                    ignoradaHasta = ahora + IGNORAR_MS
                 }
+                fallosDet++
+                mostrarEstado(etiquetaZona(det) + " · acérquese o espere", false)
+            } else {
+                sinPlaca(ahora)
             }
-            mostrarEstado(if (zona != null) etiquetaZona(zona) + " · acérquese un poco" else "Apunte a la placa", false)
             return
         }
+        sinLecturaSeguidas = 0
         fallos = 0
+        fallosDet = 0
+        ultimaPlacaVista = ahora
+        indicioHasta = ahora + 2_500L
+        if (energia != Energia.ACTIVO) {
+            val estaba = energia
+            energia = Energia.ACTIVO
+            if (estaba == Energia.AHORRO) salirAhorro()
+        }
 
-        for (lec in lecturas) {
-            val filas = l.buscarPlacaOcr(lec.placa)
-            if (filas.isEmpty()) continue
-            val exacta = l.placaExacta(lec.placa)
+        // Marco rojo sobre la placa leída (si el detector no la había marcado ya)
+        val mejorCaja = hallazgos[0].caja
+        if (det == null && mejorCaja != null) mostrar(aCuadro(mejorCaja, pase))
+
+        // Cada lectura vota; las de imágenes nítidas y del tipo de vehículo que se ve pesan más
+        for (h in hallazgos.take(3)) {
+            var q = calidad(pase, h.caja)
+            if (pista != null && h.lec.tipo != pista) q *= 0.7f
+            voto.agregar(h.lec.placa, h.lec.correcciones, q, ahora)
+        }
+        val consenso = voto.mejor(ahora) ?: return
+        decidir(l, consenso, proxy)
+    }
+
+    /** Con la placa que ganó la votación: buscar la reserva y, si hay evidencia suficiente, registrar. */
+    private fun decidir(l: Listado, c: VotoPlacas.Consenso, proxy: ImageProxy) {
+        val ahora = System.currentTimeMillis()
+        val clase = if (OcrPlaca.tipoDePlaca(c.placa) == OcrPlaca.Tipo.MOTO) "MOTO" else "CARRO"
+        txtLeida.text = c.placa
+        val filas = l.buscarPlacaOcr(c.placa)
+
+        if (filas.isNotEmpty()) {
+            val exacta = l.placaExacta(c.placa)
             // Si la lectura se parece a varias placas del listado, se espera una lectura más clara
             if (filas.size > 1 && !exacta) {
-                txtLeida.text = lec.placa
-                mostrarEstado("Se parece a ${filas.size} placas. Acérquese un poco.", true)
+                mostrarEstado("$clase · se parece a ${filas.size} placas. Acérquese un poco.", true)
                 return
             }
             val fila = filas.firstOrNull { !l.ingresado(it) } ?: filas[0]
             val placa = l.placaNormal(fila)
             ultimaLectura = placa
             txtLeida.text = placa
-            if ((enfriamiento[placa] ?: 0L) > ahora) {
+            val clave = OcrPlaca.canonica(placa)
+            if ((enfriamiento[clave] ?: 0L) > ahora) {
                 mostrarEstado("$placa ya fue procesada", true)
                 return
             }
-            // Una lectura exacta basta; si hubo que corregir letras (O/Q, I/1…) se confirma con otro cuadro reciente
-            if (placa == candidata && ahora - candidataT < 2_500L) vecesCandidata++ else { candidata = placa; vecesCandidata = 1 }
-            candidataT = ahora
-            val necesarias = if (exacta && lec.correcciones == 0) 1 else 2
-            if (vecesCandidata < necesarias) {
-                mostrarEstado("Confirmando $placa…", true)
+            // Una lectura limpia y nítida basta; si hubo que corregir letras (O/Q, I/1…) se piden más cuadros que coincidan
+            val necesario = if (exacta) PESO_EXACTA else PESO_CORREGIDA
+            if (c.peso < necesario) {
+                val porcentaje = (100f * c.peso / necesario).toInt().coerceIn(1, 99)
+                mostrarEstado("$clase · confirmando $placa ($porcentaje%)", true)
                 return
             }
-            candidata = null
-            vecesCandidata = 0
-            enfriamiento[placa] = ahora + ENFRIAMIENTO_MS
-            registrarDesdeCamara(fila, lec.placa, proxy, pista)
+            enfriamiento[clave] = ahora + ENFRIAMIENTO_MS
+            voto.limpiar()
+            registrarDesdeCamara(fila, c.placa, proxy, ultimaPista)
             return
         }
 
-        // Ninguna lectura está en el listado
-        val primera = lecturas.first()
-        val mejor = primera.placa
-        ultimaLectura = mejor
-        txtLeida.text = mejor
-        mostrarEstado("$mejor no tiene reserva", true)
-        // Solo lecturas limpias de placa completa (evita avisos por letreros o lecturas a medias)
-        if (primera.correcciones == 0 && (mejor.length == 6 || mejor.length == 5) && (enfriamiento[mejor] ?: 0L) <= ahora) {
-            enfriamiento[mejor] = ahora + ENFRIAMIENTO_MS
+        // Ninguna reserva coincide
+        ultimaLectura = c.placa
+        mostrarEstado("$clase · ${c.placa} no tiene reserva", true)
+        // Solo con evidencia fuerte (varias lecturas limpias): evita avisos por letreros o lecturas a medias
+        val clave = OcrPlaca.canonica(c.placa)
+        if (c.exactas >= 2 && c.peso >= PESO_ALERTA && (c.placa.length == 6 || c.placa.length == 5) && (enfriamiento[clave] ?: 0L) <= ahora) {
+            enfriamiento[clave] = ahora + ENFRIAMIENTO_MS
+            voto.limpiar()
             val foto = tomarFoto(proxy)
-            Operacion.alertaSinReserva(Operacion.Origen.PLACA, mejor, foto)
+            Operacion.alertaSinReserva(Operacion.Origen.PLACA, c.placa, foto)
             val via = Operacion.accionPara(Operacion.Origen.PLACA) == Operacion.Accion.VALIDAR
             vibrar(longArrayOf(0, 400))
             mostrarAviso(
-                Tipo.ALERTA, "SIN RESERVA", mejor,
-                if (via) "No está en el listado. No debe pasar." else "Hay un vehículo adentro sin reserva.",
+                Tipo.ALERTA, "SIN RESERVA", c.placa,
+                "$clase\n" + if (via) "No está en el listado. No debe pasar." else "Hay un vehículo adentro sin reserva.",
                 via
             )
         }
@@ -481,6 +951,7 @@ class PlacaActivity : AppCompatActivity() {
         val nombre = l.valor(fila, Listado.Campo.NOMBRE).ifBlank { l.titulo(fila) }
         val evento = l.valor(fila, Listado.Campo.EVENTO)
         val vip = l.esVip(fila)
+        val clase = if (OcrPlaca.tipoDePlaca(placa) == OcrPlaca.Tipo.MOTO) "MOTO" else "CARRO"
         val resultado = try {
             Operacion.procesar(fila, Operacion.Origen.PLACA, leida, foto, tipoVisto)
         } catch (e: Exception) {
@@ -497,7 +968,7 @@ class PlacaActivity : AppCompatActivity() {
                     if (vip) Tipo.VIP else Tipo.OK,
                     if (vip) "★ VIP · ACCESO VALIDADO" else "✓ ACCESO VALIDADO",
                     placa,
-                    listOf(nombre, resultado.aviso.orEmpty()).filter { it.isNotBlank() }.joinToString("\n"),
+                    listOf(clase, nombre, resultado.aviso.orEmpty()).filter { it.isNotBlank() }.joinToString("\n"),
                     true
                 )
                 if (resultado.aviso != null) vibrar(longArrayOf(0, 150, 100, 150))
@@ -505,7 +976,7 @@ class PlacaActivity : AppCompatActivity() {
                     Impresora.imprimir(this, Operacion.lineasValidacion(fila)) { error ->
                         if (error != null) txtEstado.text = "⚠ $error"
                     }
-                } else mostrarEstado("✓ $placa validada", true)
+                } else mostrarEstado("✓ $placa validada · $clase", true)
             }
             is Operacion.Resultado.YaValidado -> {
                 vibrar(longArrayOf(0, 80, 90, 80))
@@ -526,6 +997,7 @@ class PlacaActivity : AppCompatActivity() {
                 txtSesion.text = sesion.toString()
                 vibrar(longArrayOf(0, if (resultado.sinValidar) 450 else 120))
                 val extra = buildList {
+                    add(clase)
                     add(nombre)
                     if (evento.isNotBlank()) add(evento)
                     if (resultado.sinValidar) add("⚠ No pasó por la vía")
@@ -565,8 +1037,9 @@ class PlacaActivity : AppCompatActivity() {
     private fun tomarFoto(proxy: ImageProxy): Bitmap? = try {
         val bmp = proxy.toBitmap()
         val giro = proxy.imageInfo.rotationDegrees
-        if (giro == 0) bmp
+        val grande = if (giro == 0) bmp
         else Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(giro.toFloat()) }, true)
+        grande
     } catch (e: Exception) {
         null
     }
@@ -579,6 +1052,24 @@ class PlacaActivity : AppCompatActivity() {
         textoUi = t
         ultimoTextoUi = ahora
         txtEstado.text = t
+    }
+
+    private fun textoDistancia(cm: Int): String = if (cm >= 100) "${cm / 100f} m".replace(".0", "").replace('.', ',') else "$cm cm"
+
+    private fun refrescarOpciones() {
+        opMetodo.text = when (metodo) {
+            0 -> "Lectura: AUTO"
+            1 -> "Lectura: ZONA FIJA"
+            else -> "Lectura: TODA LA IMAGEN"
+        }
+        opZoom.text = "Zoom ${if (zoom % 1f == 0f) zoom.toInt().toString() else zoom.toString().replace('.', ',')}x"
+        opFoco.text = if (focoCm == 0) "Foco: AUTO" else "Foco fijo: ${textoDistancia(focoCm)}"
+        opMovimiento.text = when (movimiento) {
+            0 -> "Movimiento: NORMAL"
+            1 -> "Movimiento: RÁPIDO"
+            else -> "Movimiento: MANUAL"
+        }
+        opResolucion.text = if (altaRes) "Calidad: ALTA" else "Calidad: NORMAL"
     }
 
     private fun mostrarAviso(tipo: Tipo, titulo: String, placa: String, detalle: String, rapido: Boolean) {
@@ -607,7 +1098,7 @@ class PlacaActivity : AppCompatActivity() {
         val vw = vista.width.toFloat()
         val vh = vista.height.toFloat()
         if (vw <= 0f || vh <= 0f || cw <= 0 || ch <= 0) return PointF(x, y)
-        val escala = maxOf(vw / cw, vh / ch)
+        val escala = max(vw / cw, vh / ch)
         val dx = (cw * escala - vw) / 2f
         val dy = (ch * escala - vh) / 2f
         return PointF(x * escala - dx, y * escala - dy)
@@ -615,68 +1106,53 @@ class PlacaActivity : AppCompatActivity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    /** El recuadro rojo sigue a la placa detectada; sin placa vuelve al centro como guía. */
-    private fun moverMarco(r: DetectorPlaca.Resultado?) {
-        val lp = marco.layoutParams as FrameLayout.LayoutParams
+    /** El recuadro punteado: dónde debe quedar la placa. */
+    private fun posicionarZona() {
+        val uw = frameW
+        val uh = frameH
+        if (uw <= 0 || uh <= 0 || vista.width <= 0) return
+        if (metodo == 2) {
+            zonaView.visibility = View.GONE
+            return
+        }
+        val a = aVista(uw * ZONA_X0, uh * ZONA_Y0, uw, uh)
+        val b = aVista(uw * ZONA_X1, uh * ZONA_Y1, uw, uh)
+        val lp = zonaView.layoutParams as FrameLayout.LayoutParams
+        val nuevoIzq = a.x.toInt().coerceAtLeast(0)
+        val nuevoArr = a.y.toInt()
+        val nuevoAncho = (b.x - a.x).toInt().coerceAtLeast(dp(80))
+        val nuevoAlto = (b.y - a.y).toInt().coerceAtLeast(dp(60))
+        if (zonaView.visibility == View.VISIBLE && lp.leftMargin == nuevoIzq && lp.topMargin == nuevoArr &&
+            lp.width == nuevoAncho && lp.height == nuevoAlto
+        ) return
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.leftMargin = nuevoIzq
+        lp.topMargin = nuevoArr
+        lp.width = nuevoAncho
+        lp.height = nuevoAlto
+        zonaView.layoutParams = lp
+        zonaView.visibility = View.VISIBLE
+    }
+
+    /** Marco rojo sobre la placa que se está leyendo (en píxeles del cuadro derecho). null lo oculta. */
+    private fun mostrar(r: Rect?) {
         if (r == null) {
-            if (lp.gravity == Gravity.CENTER) return
-            lp.gravity = Gravity.CENTER
-            lp.width = dp(310)
-            lp.height = dp(120)
-            lp.leftMargin = 0
-            lp.topMargin = 0
-        } else {
-            val a = aVista(r.izq.toFloat(), r.arr.toFloat(), r.anchoCuadro, r.altoCuadro)
-            val b = aVista(r.der.toFloat(), r.aba.toFloat(), r.anchoCuadro, r.altoCuadro)
-            lp.gravity = Gravity.TOP or Gravity.START
-            lp.leftMargin = a.x.toInt()
-            lp.topMargin = a.y.toInt()
-            lp.width = (b.x - a.x).toInt().coerceAtLeast(dp(40))
-            lp.height = (b.y - a.y).toInt().coerceAtLeast(dp(30))
-            mostrarEstado(etiquetaZona(r), false)
+            if (marco.visibility != View.GONE) marco.visibility = View.GONE
+            return
         }
+        val uw = frameW
+        val uh = frameH
+        if (uw <= 0 || uh <= 0) return
+        val a = aVista(r.left.toFloat(), r.top.toFloat(), uw, uh)
+        val b = aVista(r.right.toFloat(), r.bottom.toFloat(), uw, uh)
+        val lp = marco.layoutParams as FrameLayout.LayoutParams
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.leftMargin = a.x.toInt()
+        lp.topMargin = a.y.toInt()
+        lp.width = (b.x - a.x).toInt().coerceAtLeast(dp(40))
+        lp.height = (b.y - a.y).toInt().coerceAtLeast(dp(30))
         marco.layoutParams = lp
-    }
-
-    /** Enfoca y mide la luz en la placa para que los caracteres salgan nítidos. */
-    private fun enfocar(r: DetectorPlaca.Resultado, t: Long) {
-        val c = camara ?: return
-        val movio = abs(r.centroX() - enfoqueX) > r.anchoCuadro * 0.12f || abs(r.centroY() - enfoqueY) > r.altoCuadro * 0.12f
-        if (!movio && t - ultimoEnfoque < 2_500L) return
-        try {
-            val p = aVista(r.centroX(), r.centroY(), r.anchoCuadro, r.altoCuadro)
-            val punto = vista.meteringPointFactory.createPoint(p.x, p.y)
-            val accion = FocusMeteringAction.Builder(punto, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
-                .setAutoCancelDuration(3, TimeUnit.SECONDS)
-                .build()
-            c.cameraControl.startFocusAndMetering(accion)
-            ultimoEnfoque = t
-            enfoqueX = r.centroX()
-            enfoqueY = r.centroY()
-        } catch (_: Exception) {
-        }
-    }
-
-    /** Si la placa se ve muy pequeña y está al centro, acerca un poco para leerla mejor. */
-    private fun ajustarZoom(r: DetectorPlaca.Resultado) {
-        val c = camara ?: return
-        try {
-            val maximo = c.cameraInfo.zoomState.value?.maxZoomRatio ?: return
-            val fr = r.fraccionAncho()
-            val cx = r.centroX() / r.anchoCuadro
-            val cy = r.centroY() / r.altoCuadro
-            var objetivo = zoomActual
-            if (fr < 0.13f && cx in 0.3f..0.7f && cy in 0.25f..0.75f && zoomActual < 1.2f) {
-                objetivo = (0.26f / fr).coerceIn(1f, minOf(3f, maximo))
-            } else if (fr > 0.45f && zoomActual > 1.2f) {
-                objetivo = 1f
-            }
-            if (abs(objetivo - zoomActual) > 0.3f) {
-                c.cameraControl.setZoomRatio(objetivo)
-                zoomActual = objetivo
-            }
-        } catch (_: Exception) {
-        }
+        marco.visibility = View.VISIBLE
     }
 
     // ---------------------------------------------------------------- ahorro de batería
@@ -688,7 +1164,7 @@ class PlacaActivity : AppCompatActivity() {
             camara?.cameraControl?.enableTorch(false)
             linterna = false
         }
-        moverMarco(null)
+        mostrar(null)
         mostrarEstado("Modo ahorro · apunte a una placa para continuar", true)
     }
 
@@ -701,7 +1177,7 @@ class PlacaActivity : AppCompatActivity() {
         ultimaPlacaVista = SystemClock.elapsedRealtime()
         energia = Energia.ESPERA
         salirAhorro()
-        mostrarEstado("Apunte a la placa", true)
+        mostrarEstado("Ponga la placa dentro del recuadro", true)
     }
 
     private fun brillo(valor: Float) {

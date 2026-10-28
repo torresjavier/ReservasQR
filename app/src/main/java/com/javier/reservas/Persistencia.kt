@@ -161,6 +161,32 @@ class Ajustes(ctx: Context) {
         get() = p.getInt("intervaloMin", 2).let { if (it in Sincronizacion.INTERVALOS) it else 2 }
         set(v) = p.edit().putInt("intervaloMin", if (v in Sincronizacion.INTERVALOS) v else 2).apply()
 
+    // ---- Cámara de placas (se cambian con los botones de la propia pantalla de la cámara)
+    /** 0 = AUTOMÁTICO (detector de placa + zona fija), 1 = ZONA FIJA (solo lo que cae en el recuadro), 2 = TODA LA IMAGEN. */
+    var metodoPlaca: Int
+        get() = p.getInt("metodoPlaca", 0).coerceIn(0, 2)
+        set(v) = p.edit().putInt("metodoPlaca", v.coerceIn(0, 2)).apply()
+
+    /** Zoom de la cámara de placas (1, 1,5, 2 o 3 veces). */
+    var zoomPlaca: Float
+        get() = p.getFloat("zoomPlaca", 1f).coerceIn(1f, 4f)
+        set(v) = p.edit().putFloat("zoomPlaca", v.coerceIn(1f, 4f)).apply()
+
+    /** Enfoque: 0 = automático en la zona de lectura; otro valor = distancia fija en centímetros (70, 120, 200, 400). */
+    var focoPlacaCm: Int
+        get() = p.getInt("focoPlacaCm", 0).let { if (it == 0 || it in 30..1000) it else 0 }
+        set(v) = p.edit().putInt("focoPlacaCm", v).apply()
+
+    /** Vehículo en movimiento: 0 = normal, 1 = rápido (escena de acción y más cuadros por segundo), 2 = obturador rápido manual. */
+    var movimientoPlaca: Int
+        get() = p.getInt("movimientoPlaca", 1).coerceIn(0, 2)
+        set(v) = p.edit().putInt("movimientoPlaca", v.coerceIn(0, 2)).apply()
+
+    /** Analizar a 1920x1080 (más detalle para placas lejanas) en vez de 1280x720. */
+    var altaResolucion: Boolean
+        get() = p.getBoolean("altaResolucion", true)
+        set(v) = guardar("altaResolucion", v)
+
     // ---- Operación en dos momentos (se cambia solo con el PIN de configuración)
     /** Qué hace la app al leer un QR: "VALIDAR" (solo da acceso en la vía) o "INGRESAR" (registra y da el ticket). */
     var accionQr: String
