@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Reservas" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/blanco</item>
+        <item name="colorOnPrimary">@color/negro</item>
+        <item name="colorSecondary">@color/verde</item>
+        <item name="colorSurface">@color/tarjeta</item>
+        <item name="android:windowBackground">@color/fondo</item>
+        <item name="android:statusBarColor">@color/fondo</item>
+        <item name="android:navigationBarColor">@color/fondo</item>
+    </style>
+
+    <!-- Botones tipo "chip" de la tarjeta del listado -->
+    <style name="BotonChip" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">44dp</item>
+        <item name="android:layout_marginEnd">8dp</item>
+        <item name="android:textColor">@color/blanco</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="strokeColor">@color/tarjeta_borde</item>
+        <item name="iconTint">@color/blanco</item>
+        <item name="iconSize">18dp</item>
+    </style>
+</resources>
