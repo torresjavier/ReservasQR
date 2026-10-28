@@ -17,27 +17,50 @@ data class InfoIngreso(
 /** Guarda el listado, los ingresos y sus fotos/datos en el equipo. */
 object Persistencia {
 
-    fun guardar(archivo: File, l: Listado?, info: Map<Int, InfoIngreso>) {
+    /** Lo que se recupera del archivo: listado, datos de cada ingreso y de cada validación en la vía. */
+    class Datos(val listado: Listado?, val info: Map<Int, InfoIngreso>, val infoVal: Map<Int, InfoIngreso>)
+
+    private fun infoAJson(info: Map<Int, InfoIngreso>) = JSONObject().apply {
+        info.forEach { (k, v) ->
+            put(k.toString(), JSONObject().apply {
+                put("id", v.id)
+                put("origen", v.origen)
+                put("placaLeida", v.placaLeida)
+                if (v.foto != null) put("foto", v.foto)
+            })
+        }
+    }
+
+    private fun jsonAInfo(inf: JSONObject?): Map<Int, InfoIngreso> {
+        val info = HashMap<Int, InfoIngreso>()
+        if (inf == null) return info
+        for (k in inf.keys()) {
+            val fila = k.toIntOrNull() ?: continue
+            val x = inf.getJSONObject(k)
+            info[fila] = InfoIngreso(
+                x.optString("id", UUID.randomUUID().toString()),
+                x.optString("origen", "QR"),
+                x.optString("placaLeida", ""),
+                if (x.has("foto")) x.optString("foto") else null
+            )
+        }
+        return info
+    }
+
+    fun guardar(archivo: File, l: Listado?, info: Map<Int, InfoIngreso>, infoVal: Map<Int, InfoIngreso>) {
         if (l == null) {
             archivo.delete(); return
         }
         val o = JSONObject()
-        o.put("v", 3)
+        o.put("v", 4)
         o.put("nombre", l.nombreArchivo)
         o.put("encabezados", JSONArray(l.encabezados))
         o.put("filas", JSONArray().apply { l.filas.forEach { put(JSONArray(it)) } })
         o.put("columnas", JSONArray().apply { l.columnas.forEach { put(it) } })
         o.put("ingresos", JSONObject().apply { l.ingresos.forEach { (k, v) -> put(k.toString(), v) } })
-        o.put("info", JSONObject().apply {
-            info.forEach { (k, v) ->
-                put(k.toString(), JSONObject().apply {
-                    put("id", v.id)
-                    put("origen", v.origen)
-                    put("placaLeida", v.placaLeida)
-                    if (v.foto != null) put("foto", v.foto)
-                })
-            }
-        })
+        o.put("validaciones", JSONObject().apply { l.validaciones.forEach { (k, v) -> put(k.toString(), v) } })
+        o.put("info", infoAJson(info))
+        o.put("infoVal", infoAJson(infoVal))
         val texto = o.toString()
         val tmp = File(archivo.path + ".tmp")
         tmp.writeText(texto)
@@ -47,8 +70,8 @@ object Persistencia {
         }
     }
 
-    fun cargar(archivo: File): Pair<Listado?, Map<Int, InfoIngreso>> {
-        if (!archivo.exists()) return null to emptyMap()
+    fun cargar(archivo: File): Datos {
+        if (!archivo.exists()) return Datos(null, emptyMap(), emptyMap())
         return try {
             val o = JSONObject(archivo.readText())
             val l = Listado()
@@ -68,23 +91,12 @@ object Persistencia {
             }
             val ing = o.optJSONObject("ingresos")
             ing?.keys()?.forEach { k -> k.toIntOrNull()?.let { l.ingresos[it] = ing.getLong(k) } }
+            val vals = o.optJSONObject("validaciones")
+            vals?.keys()?.forEach { k -> k.toIntOrNull()?.let { l.validaciones[it] = vals.getLong(k) } }
             l.reindexar()
-
-            val info = HashMap<Int, InfoIngreso>()
-            val inf = o.optJSONObject("info")
-            inf?.keys()?.forEach { k ->
-                val fila = k.toIntOrNull() ?: return@forEach
-                val x = inf.getJSONObject(k)
-                info[fila] = InfoIngreso(
-                    x.optString("id", UUID.randomUUID().toString()),
-                    x.optString("origen", "QR"),
-                    x.optString("placaLeida", ""),
-                    if (x.has("foto")) x.optString("foto") else null
-                )
-            }
-            l to info
+            Datos(l, jsonAInfo(o.optJSONObject("info")), jsonAInfo(o.optJSONObject("infoVal")))
         } catch (e: Exception) {
-            null to emptyMap()
+            Datos(null, emptyMap(), emptyMap())
         }
     }
 }
@@ -139,10 +151,73 @@ class Ajustes(ctx: Context) {
         get() = texto("token", "")
         set(v) = guardar("token", v)
 
-    /** Cada cuántos registros se envía un lote (1 a 10). */
+    /** Cuántos registros se juntan para enviar un lote: 5, 10 o 20. */
     var loteEnvio: Int
-        get() = p.getInt("lote", 5).coerceIn(1, Sincronizacion.MAX_PENDIENTES)
-        set(v) = p.edit().putInt("lote", v.coerceIn(1, Sincronizacion.MAX_PENDIENTES)).apply()
+        get() = p.getInt("lote", 5).let { if (it in Sincronizacion.LOTES) it else 5 }
+        set(v) = p.edit().putInt("lote", if (v in Sincronizacion.LOTES) v else 5).apply()
+
+    /** Cada cuántos minutos la app envía lo pendiente y trae reservas (mientras esté abierta, y solo con internet). */
+    var intervaloMin: Int
+        get() = p.getInt("intervaloMin", 2).let { if (it in Sincronizacion.INTERVALOS) it else 2 }
+        set(v) = p.edit().putInt("intervaloMin", if (v in Sincronizacion.INTERVALOS) v else 2).apply()
+
+    // ---- Operación en dos momentos (se cambia solo con el PIN de configuración)
+    /** Qué hace la app al leer un QR: "VALIDAR" (solo da acceso en la vía) o "INGRESAR" (registra y da el ticket). */
+    var accionQr: String
+        get() = texto("accionQr", Operacion.Accion.INGRESAR.name)
+        set(v) = guardar("accionQr", v)
+
+    var accionPlaca: String
+        get() = texto("accionPlaca", Operacion.Accion.INGRESAR.name)
+        set(v) = guardar("accionPlaca", v)
+
+    /** Al validar en la vía: imprimir un comprobante corto. */
+    var imprimirAlValidar: Boolean
+        get() = p.getBoolean("imprimirAlValidar", false)
+        set(v) = guardar("imprimirAlValidar", v)
+
+    /** Al validar en la vía: enviar el registro al servidor (así el equipo de adentro se entera). */
+    var enviarAlValidar: Boolean
+        get() = p.getBoolean("enviarAlValidar", true)
+        set(v) = guardar("enviarAlValidar", v)
+
+    /** Adentro: no dar ingreso a quien no pasó antes por la vía (posible colado). */
+    var exigirValidacion: Boolean
+        get() = p.getBoolean("exigirValidacion", false)
+        set(v) = guardar("exigirValidacion", v)
+
+    /** Enviar las alertas (sin reserva, repetidos, sin validar) al servidor. */
+    var enviarAlertas: Boolean
+        get() = p.getBoolean("enviarAlertas", true)
+        set(v) = guardar("enviarAlertas", v)
+
+    /** Minutos que puede esperar un vehículo validado en la vía sin recibir ticket adentro antes de marcarlo en rojo. */
+    var minutosEspera: Int
+        get() = p.getInt("minutosEspera", 30).coerceIn(5, 600)
+        set(v) = p.edit().putInt("minutosEspera", v.coerceIn(5, 600)).apply()
+
+    // ---- PIN de configuración
+    private var pinSal: String
+        get() = texto("pinSal", "")
+        set(v) = guardar("pinSal", v)
+    private var pinHuella: String
+        get() = texto("pinHuella", "")
+        set(v) = guardar("pinHuella", v)
+
+    val tienePin: Boolean get() = pinHuella.isNotBlank()
+
+    fun crearPin(pin: String) {
+        val sal = Pin.nuevaSal()
+        pinSal = sal
+        pinHuella = Pin.huella(sal, pin)
+    }
+
+    fun pinCorrecto(pin: String): Boolean = Pin.coincide(pinSal, pinHuella, pin)
+
+    fun borrarPin() {
+        pinSal = ""
+        pinHuella = ""
+    }
 
     var autoReservas: Boolean
         get() = p.getBoolean("autoReservas", true)

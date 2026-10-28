@@ -15,6 +15,99 @@
 
         <TextView
             style="@style/TituloSeccion"
+            android:text="OPERACIÓN EN DOS MOMENTOS" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:text="1) VÍA: se lee el QR o la placa y solo se valida (da acceso, sin detener el vehículo).\n2) INTERIOR: ya adentro se lee de nuevo, se registra el ingreso y se imprime el ticket."
+            android:textColor="@color/texto_suave"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/ajPerfilVia"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Equipo de la VÍA"
+                android:textColor="@color/blanco"
+                app:strokeColor="@color/tarjeta_borde" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/ajPerfilInterior"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="Equipo INTERIOR"
+                android:textColor="@color/blanco"
+                app:strokeColor="@color/tarjeta_borde" />
+        </LinearLayout>
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajSoloValidarQr"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Al leer el QR: solo VALIDAR (si no, registra el ingreso)" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajSoloValidarPlaca"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Al leer la placa: solo VALIDAR (si no, registra el ingreso)" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajImprimirValidar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Al validar: imprimir un comprobante corto" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajEnviarValidar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Al validar: enviar el registro al servidor" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajExigirValidacion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Adentro: no dar ingreso a quien no pasó por la vía" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajEnviarAlertas"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Enviar las alertas (sin reserva, repetidos, colados) al servidor" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Minutos de espera antes de marcar en rojo"
+            app:helperText="Un vehículo validado en la vía que no recibe ticket adentro pasado este tiempo se marca en rojo.">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajMinutosEspera"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:maxLength="3" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView
+            style="@style/TituloSeccion"
+            android:layout_marginTop="18dp"
             android:text="OPERADOR Y TICKET" />
 
         <com.google.android.material.textfield.TextInputLayout
@@ -136,27 +229,45 @@
                 android:inputType="textPassword" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <com.google.android.material.textfield.TextInputLayout
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Enviar cuando se junten (registros)"
+            android:textColor="@color/texto_suave"
+            android:textSize="13sp" />
+
+        <Spinner
+            android:id="@+id/ajLote"
+            android:layout_width="match_parent"
+            android:layout_height="48dp" />
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:hint="Enviar cada cuántos registros (1 a 10)"
-            app:helperText="Nunca quedan más de 10 registros esperando: al llegar a 10 se envían de una vez.">
+            android:text="Enviar lo pendiente y traer reservas cada (minutos)"
+            android:textColor="@color/texto_suave"
+            android:textSize="13sp" />
 
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/ajLote"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="number"
-                android:maxLength="2" />
-        </com.google.android.material.textfield.TextInputLayout>
+        <Spinner
+            android:id="@+id/ajIntervalo"
+            android:layout_width="match_parent"
+            android:layout_height="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Solo se usa internet cuando hay algo que enviar. Si un envío falla, el registro se conserva con el mismo id y se reintenta en el siguiente ciclo o al volver la conexión."
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
 
         <com.google.android.material.materialswitch.MaterialSwitch
             android:id="@+id/ajAutoReservas"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Traer reservas nuevas automáticamente (cada 15 min con internet)" />
+            android:text="Traer reservas nuevas (y el estado de validadas / ingresadas) automáticamente" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajPrueba"
@@ -165,6 +276,16 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:text="Imprimir ticket de prueba"
+            android:textColor="@color/blanco"
+            app:strokeColor="@color/tarjeta_borde" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/ajCambiarPin"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Cambiar el PIN de configuración"
             android:textColor="@color/blanco"
             app:strokeColor="@color/tarjeta_borde" />
     </LinearLayout>

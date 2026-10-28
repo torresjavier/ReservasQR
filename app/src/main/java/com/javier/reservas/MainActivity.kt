@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.DocumentsContract
@@ -39,6 +40,8 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Spinner
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -87,6 +90,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imgAvatar: ImageView
     private lateinit var txtOperador: TextView
     private lateinit var txtSubtitulo: TextView
+    private lateinit var chipModo: TextView
+    private lateinit var chipAlertas: TextView
+    private lateinit var segValidados: TextView
+    private lateinit var banner: View
+    private lateinit var bannerTitulo: TextView
+    private lateinit var bannerPlaca: TextView
+    private lateinit var bannerDetalle: TextView
     private lateinit var chipImpresora: TextView
     private lateinit var chipLector: TextView
     private lateinit var chipEnvio: TextView
@@ -104,7 +114,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnDesbloquear: Button
     private lateinit var adaptador: ReservaAdapter
 
-    private var verIngresados = false
+    private enum class Vista { PENDIENTES, VALIDADOS, INGRESADOS }
+    private var verLista = Vista.PENDIENTES
+    /** El PIN de configuración ya se escribió: no se vuelve a pedir hasta esta hora. */
+    private var pinValidoHasta = 0L
+    private var pinFallos = 0
+    private var pinBloqueadoHasta = 0L
+    private var despuesDeRestablecer: (() -> Unit)? = null
+    private val ocultarBanner = Runnable { banner.visibility = View.GONE }
     private var dialogoActual: AlertDialog? = null
     private val bufferTeclas = StringBuilder()
     private var ultimaTecla = 0L
@@ -181,6 +198,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** «Olvidé el PIN»: se confirma con la clave de desbloqueo del equipo y se crea uno nuevo. */
+    private val restablecerPin = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        Bloqueo.autenticando = false
+        if (r.resultCode == RESULT_OK) {
+            ajustes.borrarPin()
+            val seguir = despuesDeRestablecer
+            despuesDeRestablecer = null
+            crearPin(seguir)
+        } else {
+            despuesDeRestablecer = null
+            toast("No se restableció el PIN.")
+        }
+    }
+
     /** Lecturas del lector Sunmi cuando está en modo «broadcast». */
     private val receptorEscaner = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -206,6 +237,13 @@ class MainActivity : AppCompatActivity() {
         imgAvatar = findViewById(R.id.imgAvatar)
         txtOperador = findViewById(R.id.txtOperador)
         txtSubtitulo = findViewById(R.id.txtSubtitulo)
+        chipModo = findViewById(R.id.chipModo)
+        chipAlertas = findViewById(R.id.chipAlertas)
+        segValidados = findViewById(R.id.segValidados)
+        banner = findViewById(R.id.bannerRapido)
+        bannerTitulo = findViewById(R.id.bannerTitulo)
+        bannerPlaca = findViewById(R.id.bannerPlaca)
+        bannerDetalle = findViewById(R.id.bannerDetalle)
         chipImpresora = findViewById(R.id.chipImpresora)
         chipLector = findViewById(R.id.chipLector)
         chipEnvio = findViewById(R.id.chipEnvio)
@@ -252,8 +290,12 @@ class MainActivity : AppCompatActivity() {
         chipImpresora.setOnClickListener { enviarAImpresora(Operacion.lineasPrueba(), null) }
         chipLector.setOnClickListener { iniciarEscaneo() }
         chipEnvio.setOnClickListener { enviarAhora() }
-        segPendientes.setOnClickListener { verIngresados = false; refrescarLista() }
-        segIngresados.setOnClickListener { verIngresados = true; refrescarLista() }
+        segPendientes.setOnClickListener { verLista = Vista.PENDIENTES; refrescarLista() }
+        segValidados.setOnClickListener { verLista = Vista.VALIDADOS; refrescarLista() }
+        segIngresados.setOnClickListener { verLista = Vista.INGRESADOS; refrescarLista() }
+        banner.setOnClickListener { banner.visibility = View.GONE }
+        chipModo.setOnClickListener { explicarModo() }
+        chipAlertas.setOnClickListener { mostrarAlertas() }
         btnLimpiar.setOnClickListener { edtPlaca.setText("") }
         btnDesbloquear.setOnClickListener { esperarBoton = false; pedirClave() }
 
@@ -472,11 +514,17 @@ class MainActivity : AppCompatActivity() {
         if (candidatas.isEmpty()) {
             vibrar(600)
             tonoError()
-            mostrarTarjeta(
-                Estilo.ERROR, "✗ NO ESTÁ EN EL LISTADO", null, texto.trim(),
-                secundario = accion("Buscar placa") { d, _ -> d.dismiss(); enfocarBuscador() },
-                principal = accion("Escanear otro") { d, _ -> d.dismiss(); iniciarEscaneo() }
-            )
+            // Alguien sin reserva en el listado: queda como alerta (y se envía al servidor)
+            Operacion.alertaSinReserva(Operacion.Origen.QR, texto.trim(), null)
+            if (Operacion.accionPara(Operacion.Origen.QR) == Operacion.Accion.VALIDAR) {
+                mostrarBanner(Estilo.ERROR, "✗ SIN RESERVA", null, texto.trim(), "El código no está en el listado. No debe pasar.")
+            } else {
+                mostrarTarjeta(
+                    Estilo.ERROR, "✗ NO ESTÁ EN EL LISTADO", null, texto.trim(),
+                    secundario = accion("Buscar placa") { d, _ -> d.dismiss(); enfocarBuscador() },
+                    principal = accion("Escanear otro") { d, _ -> d.dismiss(); iniciarEscaneo() }
+                )
+            }
             return
         }
         val libre = candidatas.firstOrNull { !l.ingresado(it) }
@@ -500,30 +548,117 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------------------------------------------------------- registrar / mostrar
 
-    private fun registrar(fila: Int, origen: Operacion.Origen) {
-        when (val r = Operacion.registrar(fila, origen)) {
-            is Operacion.Registro.Nuevo -> {
-                vibrar(80)
-                val l = listado ?: return
+    /**
+     * Valida o registra según el modo del equipo (Ajustes). En la vía (validar) la respuesta es un aviso rápido
+     * que se quita solo, para no detener la operación; adentro (ingresar) se muestra la tarjeta con el ticket.
+     */
+    private fun registrar(
+        fila: Int,
+        origen: Operacion.Origen,
+        forzar: Boolean = false,
+        modo: Operacion.Accion? = null
+    ) {
+        val l = listado ?: return
+        val vip = l.esVip(fila)
+        val resultado = try {
+            Operacion.procesar(fila, origen, null, null, null, forzar, modo)
+        } catch (e: Exception) {
+            mostrarError("No se pudo registrar", e.message ?: e.toString())
+            return
+        }
+        when (resultado) {
+            is Operacion.Resultado.Validado -> {
+                vibrar(if (resultado.aviso != null) 300 else 80)
+                mostrarBanner(
+                    if (vip) Estilo.VIP else Estilo.OK,
+                    if (vip) "★ VIP · ACCESO VALIDADO" else "✓ ACCESO VALIDADO",
+                    fila, null, resultado.aviso
+                )
+                if (ajustes.imprimirAlValidar) {
+                    Impresora.imprimir(this, Operacion.lineasValidacion(fila)) { error ->
+                        if (error != null) toast("No se imprimió: $error")
+                    }
+                }
+                if (origen == Operacion.Origen.BUSQUEDA) edtPlaca.setText("")
+            }
+            is Operacion.Resultado.YaValidado -> {
+                if (resultado.sospechoso) {
+                    vibrar(500)
+                    tonoError()
+                    mostrarBanner(
+                        Estilo.ERROR, "⚠ YA SE VALIDÓ", fila, null,
+                        "Pasó a las ${fmtHora.format(Date(resultado.hora))}. Verifique: puede ser un QR o una placa repetida."
+                    )
+                } else {
+                    vibrar(200)
+                    mostrarBanner(Estilo.AVISO, "YA VALIDADA · ${fmtHora.format(Date(resultado.hora))}", fila, null, null)
+                }
+            }
+            is Operacion.Resultado.Ingresado -> {
+                vibrar(if (resultado.sinValidar) 400 else 80)
                 val auto = ajustes.autoImprimir
+                val notas = listOfNotNull(
+                    if (resultado.sinValidar) "⚠ No pasó por la vía antes de ingresar." else null,
+                    resultado.aviso
+                ).joinToString("\n").ifBlank { null }
                 mostrarTarjeta(
-                    if (l.esVip(fila)) Estilo.VIP else Estilo.OK,
-                    if (l.esVip(fila)) "★ VIP · RESERVA INGRESADA" else "✓ RESERVA INGRESADA",
+                    if (vip) Estilo.VIP else Estilo.OK,
+                    if (vip) "★ VIP · RESERVA INGRESADA" else "✓ RESERVA INGRESADA",
                     fila, null,
                     secundario = accion(if (auto) "Reimprimir" else "Imprimir ticket") { _, est -> imprimir(fila, auto, est) },
                     principal = siguiente(origen),
-                    imprimirAhora = auto
+                    imprimirAhora = auto,
+                    nota = notas
                 )
             }
-            is Operacion.Registro.Repetido -> {
+            is Operacion.Resultado.YaIngreso -> {
                 vibrar(250)
                 mostrarTarjeta(
-                    Estilo.AVISO, "YA INGRESÓ · ${fmtHora.format(Date(r.hora))}", fila, null,
+                    Estilo.AVISO, "YA INGRESÓ · ${fmtHora.format(Date(resultado.hora))}", fila, null,
                     secundario = accion("Reimprimir") { _, est -> imprimir(fila, true, est) },
                     principal = siguiente(origen)
                 )
             }
+            is Operacion.Resultado.SinValidacion -> {
+                vibrar(600)
+                tonoError()
+                mostrarTarjeta(
+                    Estilo.ERROR, "✗ NO PASÓ POR LA VÍA", fila, null,
+                    secundario = accion("Cancelar") { d, _ -> d.dismiss() },
+                    principal = accion("Registrar de todas formas") { d, _ -> d.dismiss(); registrar(fila, origen, true, modo) },
+                    nota = "Esta reserva no fue validada en la vía. Posible intento de colarse."
+                )
+            }
         }
+    }
+
+    /** Aviso grande que se quita solo: confirma una lectura sin obligar a tocar nada. */
+    private fun mostrarBanner(estilo: Estilo, titulo: String, fila: Int?, textoLibre: String?, extra: String?) {
+        val l = listado
+        val (fondo, texto) = when (estilo) {
+            Estilo.OK -> R.drawable.aviso_ok to R.color.negro
+            Estilo.VIP -> R.drawable.aviso_vip to R.color.negro
+            Estilo.AVISO, Estilo.INFO -> R.drawable.aviso_repetido to R.color.blanco
+            Estilo.ERROR -> R.drawable.aviso_error to R.color.blanco
+        }
+        banner.setBackgroundResource(fondo)
+        val c = getColor(texto)
+        bannerTitulo.setTextColor(c)
+        bannerDetalle.setTextColor(c)
+        bannerTitulo.text = titulo
+        val placa = if (l != null && fila != null) l.valor(fila, Listado.Campo.PLACA).uppercase() else ""
+        bannerPlaca.text = placa
+        bannerPlaca.visibility = if (placa.isBlank()) View.GONE else View.VISIBLE
+        val detalle = listOfNotNull(
+            if (l != null && fila != null) l.valor(fila, Listado.Campo.NOMBRE).ifBlank { l.titulo(fila) } else textoLibre,
+            if (l != null && fila != null) l.valor(fila, Listado.Campo.EVENTO).takeIf { it.isNotBlank() } else null,
+            extra
+        ).filter { it.isNotBlank() }.joinToString("\n")
+        bannerDetalle.text = detalle
+        bannerDetalle.visibility = if (detalle.isBlank()) View.GONE else View.VISIBLE
+        banner.visibility = View.VISIBLE
+        handler.removeCallbacks(ocultarBanner)
+        handler.postDelayed(ocultarBanner, if (estilo == Estilo.ERROR) 3_000L else 1_600L)
     }
 
     private fun accion(texto: String, f: (AlertDialog, TextView) -> Unit): Pair<String, (AlertDialog, TextView) -> Unit> = texto to f
@@ -543,21 +678,37 @@ class MainActivity : AppCompatActivity() {
                 secundario = accion("Anular ingreso") { d, _ -> d.dismiss(); confirmarAnular(fila) },
                 principal = accion("Reimprimir") { _, est -> imprimir(fila, true, est) }
             )
+        } else if (l.validado(fila)) {
+            val min = Operacion.minutosEsperando(fila)
+            mostrarTarjeta(
+                if (min >= ajustes.minutosEspera) Estilo.ERROR else Estilo.INFO,
+                "VALIDADA EN LA VÍA · ${fmtHora.format(Date(l.validaciones[fila] ?: 0L))}", fila, null,
+                secundario = accion("Anular validación") { d, _ -> d.dismiss(); confirmarAnular(fila) },
+                principal = accion("Registrar ingreso") { d, _ ->
+                    d.dismiss()
+                    registrar(fila, Operacion.Origen.BUSQUEDA, modo = Operacion.Accion.INGRESAR)
+                },
+                nota = if (min >= 1) "Lleva $min min esperando sin recibir ticket adentro." else null
+            )
         } else {
+            val validar = Operacion.accionPara(Operacion.Origen.BUSQUEDA) == Operacion.Accion.VALIDAR
             mostrarTarjeta(
                 Estilo.INFO, "RESERVA PENDIENTE", fila, null,
                 secundario = accion("Cerrar") { d, _ -> d.dismiss() },
-                principal = accion("Registrar ingreso") { d, _ -> d.dismiss(); registrar(fila, Operacion.Origen.BUSQUEDA) }
+                principal = accion(if (validar) "Validar acceso" else "Registrar ingreso") { d, _ ->
+                    d.dismiss(); registrar(fila, Operacion.Origen.BUSQUEDA)
+                }
             )
         }
     }
 
     private fun confirmarAnular(fila: Int) {
         val l = listado ?: return
+        val soloValidada = !l.ingresado(fila) && l.validado(fila)
         MaterialAlertDialogBuilder(this)
-            .setTitle("¿Anular el ingreso?")
-            .setMessage("${l.titulo(fila)} volverá a quedar como pendiente. Se avisará al servidor.")
-            .setPositiveButton("Anular") { _, _ -> Operacion.anular(fila) }
+            .setTitle(if (soloValidada) "¿Anular la validación?" else "¿Anular el ingreso?")
+            .setMessage("${l.titulo(fila)} volverá a quedar como ${if (soloValidada || !l.validado(fila)) "pendiente" else "validada en la vía"}. Se avisará al servidor.")
+            .setPositiveButton("Anular") { _, _ -> conPin { Operacion.anular(fila) } }
             .setNegativeButton("Cancelar", null)
             .show()
     }
@@ -569,7 +720,8 @@ class MainActivity : AppCompatActivity() {
         textoLibre: String?,
         secundario: Pair<String, (AlertDialog, TextView) -> Unit>,
         principal: Pair<String, (AlertDialog, TextView) -> Unit>,
-        imprimirAhora: Boolean = false
+        imprimirAhora: Boolean = false,
+        nota: String? = null
     ) {
         val l = listado
         val v = layoutInflater.inflate(R.layout.dialog_resultado, null)
@@ -601,10 +753,15 @@ class MainActivity : AppCompatActivity() {
             tVip.visibility = if (l.esVip(fila)) View.VISIBLE else View.GONE
             tNombre.text = l.valor(fila, Listado.Campo.NOMBRE).ifBlank { l.titulo(fila) }
             val det = mutableListOf<String>()
+            nota?.let { det += it }
             l.valor(fila, Listado.Campo.EVENTO).takeIf { it.isNotBlank() }?.let { det += "Evento: $it" }
             l.valor(fila, Listado.Campo.CODIGO).takeIf { it.isNotBlank() }?.let { det += "Reserva: $it" }
             l.valor(fila, Listado.Campo.TIPO).takeIf { it.isNotBlank() }?.let { det += "Tipo: ${it.uppercase()}" }
+            l.validaciones[fila]?.let { det += "Validado en la vía: ${fmtFecha.format(Date(it))}" }
             l.ingresos[fila]?.let { det += "Ingreso: ${fmtFecha.format(Date(it))}" }
+            Operacion.infoVal[fila]?.let { i ->
+                if (i.placaLeida.isNotBlank()) det += "Placa leída en la vía: ${i.placaLeida}"
+            }
             Operacion.info[fila]?.let { i ->
                 val como = when (i.origen) {
                     Operacion.Origen.PLACA.api -> "cámara (placa leída: ${i.placaLeida})"
@@ -702,8 +859,10 @@ class MainActivity : AppCompatActivity() {
         item(R.drawable.ic_impresora, "Imprimir ticket de prueba", if (Impresora.esSunmi) "Impresora Sunmi lista" else "Sin impresora Sunmi") {
             enviarAImpresora(Operacion.lineasPrueba(), null)
         }
-        item(R.drawable.ic_ajustes, "Ajustes", "Operador, ticket, servidor") { mostrarAjustes() }
-        item(R.drawable.ic_borrar, "Borrar todos los ingresos", "Deja todas las reservas como pendientes", rojo = true) { confirmarReinicio() }
+        val nAlertas = Alertas.cantidad(this)
+        item(R.drawable.ic_candado, "Alertas de la jornada", if (nAlertas > 0) "$nAlertas alertas: intentos de colarse, repetidos, sin reserva" else "Sin alertas por ahora") { mostrarAlertas() }
+        item(R.drawable.ic_ajustes, "Ajustes (PIN)", "Operación vía / interior, ticket, servidor") { mostrarAjustes() }
+        item(R.drawable.ic_borrar, "Borrar todos los ingresos", "Deja todas las reservas como pendientes (PIN)", rojo = true) { conPin { confirmarReinicio() } }
 
         hoja.setContentView(v)
         hoja.show()
@@ -831,12 +990,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun confirmarSiHayAvance(hacer: () -> Unit) {
         val l = listado
-        if (l == null || l.ingresos.isEmpty()) {
+        if (l == null) {
+            hacer(); return
+        }
+        // Reemplazar el listado cambia toda la operación: pide el PIN de configuración
+        conPin { confirmarReemplazo(hacer) }
+    }
+
+    private fun confirmarReemplazo(hacer: () -> Unit) {
+        val l = listado
+        if (l == null || (l.ingresos.isEmpty() && l.validaciones.isEmpty())) {
             hacer(); return
         }
         MaterialAlertDialogBuilder(this)
             .setTitle("¿Cargar un listado nuevo?")
-            .setMessage("Hay ${l.ingresos.size} ingresos registrados en «${l.nombreArchivo}». Si carga otro listado se reemplazan. Puede exportarlos primero.")
+            .setMessage("Hay ${l.ingresos.size} ingresos y ${l.cantidadValidados()} validaciones registrados en «${l.nombreArchivo}». Si carga otro listado se reemplazan. Puede exportarlos primero.")
             .setPositiveButton("Cargar nuevo") { _, _ -> hacer() }
             .setNeutralButton("Exportar primero") { _, _ -> exportar() }
             .setNegativeButton("Cancelar", null)
@@ -856,7 +1024,7 @@ class MainActivity : AppCompatActivity() {
                 r.onSuccess { l ->
                     Operacion.reemplazarListado(l)
                     edtPlaca.setText("")
-                    verIngresados = false
+                    verLista = Vista.PENDIENTES
                     refrescar()
                     mostrarColumnas(true)
                 }.onFailure { e ->
@@ -1089,7 +1257,17 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------------------------------------------------------- ajustes
 
+    /** Los ajustes (modo de operación, servidor, ticket…) se abren solo con el PIN de configuración. */
     private fun mostrarAjustes() {
+        conPin(crearSiFalta = true) { abrirAjustes() }
+    }
+
+    private fun adaptadorSpinner(items: List<String>): ArrayAdapter<String> =
+        ArrayAdapter(this, android.R.layout.simple_spinner_item, items).also {
+            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+
+    private fun abrirAjustes() {
         val v = layoutInflater.inflate(R.layout.dialog_ajustes, null)
         val op = v.findViewById<EditText>(R.id.ajOperador)
         val neg = v.findViewById<EditText>(R.id.ajNegocio)
@@ -1101,8 +1279,21 @@ class MainActivity : AppCompatActivity() {
         val urlEnvio = v.findViewById<EditText>(R.id.ajUrlEnvio)
         val urlReservas = v.findViewById<EditText>(R.id.ajUrlReservas)
         val token = v.findViewById<EditText>(R.id.ajToken)
-        val lote = v.findViewById<EditText>(R.id.ajLote)
+        val lote = v.findViewById<Spinner>(R.id.ajLote)
+        val intervalo = v.findViewById<Spinner>(R.id.ajIntervalo)
         val autoRes = v.findViewById<MaterialSwitch>(R.id.ajAutoReservas)
+        val soloQr = v.findViewById<MaterialSwitch>(R.id.ajSoloValidarQr)
+        val soloPlaca = v.findViewById<MaterialSwitch>(R.id.ajSoloValidarPlaca)
+        val impVal = v.findViewById<MaterialSwitch>(R.id.ajImprimirValidar)
+        val envVal = v.findViewById<MaterialSwitch>(R.id.ajEnviarValidar)
+        val exigir = v.findViewById<MaterialSwitch>(R.id.ajExigirValidacion)
+        val envAlertas = v.findViewById<MaterialSwitch>(R.id.ajEnviarAlertas)
+        val minEspera = v.findViewById<EditText>(R.id.ajMinutosEspera)
+
+        lote.adapter = adaptadorSpinner(Sincronizacion.LOTES.map { "$it registros" })
+        lote.setSelection(Sincronizacion.LOTES.indexOf(ajustes.loteEnvio).coerceAtLeast(0))
+        intervalo.adapter = adaptadorSpinner(Sincronizacion.INTERVALOS.map { if (it == 1) "1 minuto" else "$it minutos" })
+        intervalo.setSelection(Sincronizacion.INTERVALOS.indexOf(ajustes.intervaloMin).coerceAtLeast(0))
 
         op.setText(ajustes.operador.takeIf { it != "Operador" }.orEmpty())
         neg.setText(ajustes.negocio)
@@ -1114,8 +1305,34 @@ class MainActivity : AppCompatActivity() {
         urlEnvio.setText(ajustes.urlEnvio)
         urlReservas.setText(ajustes.urlReservas)
         token.setText(ajustes.token)
-        lote.setText(ajustes.loteEnvio.toString())
         autoRes.isChecked = ajustes.autoReservas
+        soloQr.isChecked = ajustes.accionQr == Operacion.Accion.VALIDAR.name
+        soloPlaca.isChecked = ajustes.accionPlaca == Operacion.Accion.VALIDAR.name
+        impVal.isChecked = ajustes.imprimirAlValidar
+        envVal.isChecked = ajustes.enviarAlValidar
+        exigir.isChecked = ajustes.exigirValidacion
+        envAlertas.isChecked = ajustes.enviarAlertas
+        minEspera.setText(ajustes.minutosEspera.toString())
+
+        v.findViewById<View>(R.id.ajPerfilVia).setOnClickListener {
+            soloQr.isChecked = true
+            soloPlaca.isChecked = true
+            impVal.isChecked = false
+            envVal.isChecked = true
+            exigir.isChecked = false
+            envAlertas.isChecked = true
+            toast("Equipo de la vía: solo valida y envía. Toque «Guardar».")
+        }
+        v.findViewById<View>(R.id.ajPerfilInterior).setOnClickListener {
+            soloQr.isChecked = false
+            soloPlaca.isChecked = false
+            auto.isChecked = true
+            envVal.isChecked = true
+            exigir.isChecked = true
+            envAlertas.isChecked = true
+            toast("Equipo interior: registra e imprime, y exige haber pasado por la vía. Toque «Guardar».")
+        }
+        v.findViewById<View>(R.id.ajCambiarPin).setOnClickListener { crearPin(null) }
 
         fun guardarCampos() {
             ajustes.operador = op.text.toString()
@@ -1128,8 +1345,16 @@ class MainActivity : AppCompatActivity() {
             ajustes.urlEnvio = urlEnvio.text.toString()
             ajustes.urlReservas = urlReservas.text.toString()
             ajustes.token = token.text.toString()
-            ajustes.loteEnvio = lote.text.toString().toIntOrNull() ?: 5
+            ajustes.loteEnvio = Sincronizacion.LOTES[lote.selectedItemPosition.coerceIn(0, Sincronizacion.LOTES.size - 1)]
+            ajustes.intervaloMin = Sincronizacion.INTERVALOS[intervalo.selectedItemPosition.coerceIn(0, Sincronizacion.INTERVALOS.size - 1)]
             ajustes.autoReservas = autoRes.isChecked
+            ajustes.accionQr = if (soloQr.isChecked) Operacion.Accion.VALIDAR.name else Operacion.Accion.INGRESAR.name
+            ajustes.accionPlaca = if (soloPlaca.isChecked) Operacion.Accion.VALIDAR.name else Operacion.Accion.INGRESAR.name
+            ajustes.imprimirAlValidar = impVal.isChecked
+            ajustes.enviarAlValidar = envVal.isChecked
+            ajustes.exigirValidacion = exigir.isChecked
+            ajustes.enviarAlertas = envAlertas.isChecked
+            ajustes.minutosEspera = minEspera.text.toString().toIntOrNull() ?: 30
             Sincronizacion.programar(this)
             refrescar()
         }
@@ -1144,6 +1369,186 @@ class MainActivity : AppCompatActivity() {
                 if (Bandeja.cantidad(this) > 0) Sincronizacion.enviarAhora(this)
             }
             .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    // ---------------------------------------------------------------- PIN de configuración
+
+    /** Ejecuta [alVerificar] solo después del PIN de configuración (si el administrador ya creó uno). */
+    private fun conPin(crearSiFalta: Boolean = false, alVerificar: () -> Unit) {
+        if (!ajustes.tienePin) {
+            if (crearSiFalta) crearPin(alVerificar) else alVerificar()
+            return
+        }
+        if (SystemClock.elapsedRealtime() < pinValidoHasta) {
+            alVerificar(); return
+        }
+        pedirPin(alVerificar)
+    }
+
+    private fun pedirPin(alVerificar: () -> Unit) {
+        val v = layoutInflater.inflate(R.layout.dialog_pin, null)
+        val campo = v.findViewById<EditText>(R.id.pinCampo)
+        val error = v.findViewById<TextView>(R.id.pinError)
+        v.findViewById<TextView>(R.id.pinMensaje).text = "Escriba el PIN de configuración para continuar."
+        val d = MaterialAlertDialogBuilder(this)
+            .setTitle("PIN de configuración")
+            .setView(v)
+            .setPositiveButton("Aceptar", null)
+            .setNegativeButton("Cancelar", null)
+            .setNeutralButton("Olvidé el PIN", null)
+            .create()
+        d.setOnShowListener {
+            campo.requestFocus()
+            d.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+            fun verificar() {
+                val ahora = SystemClock.elapsedRealtime()
+                if (ahora < pinBloqueadoHasta) {
+                    error.text = "Demasiados intentos. Espere ${(pinBloqueadoHasta - ahora) / 1000 + 1} s."
+                    error.visibility = View.VISIBLE
+                    return
+                }
+                if (ajustes.pinCorrecto(campo.text.toString())) {
+                    pinFallos = 0
+                    pinValidoHasta = ahora + 2 * 60_000L
+                    d.dismiss()
+                    alVerificar()
+                } else {
+                    pinFallos++
+                    campo.setText("")
+                    if (pinFallos >= 5) {
+                        pinFallos = 0
+                        pinBloqueadoHasta = ahora + 60_000L
+                        error.text = "PIN incorrecto. Espere 1 minuto para intentar de nuevo."
+                    } else {
+                        error.text = "PIN incorrecto ($pinFallos de 5)."
+                    }
+                    error.visibility = View.VISIBLE
+                }
+            }
+            d.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener { verificar() }
+            d.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+                d.dismiss()
+                olvidePin(alVerificar)
+            }
+            campo.setOnEditorActionListener { _, id, _ ->
+                if (id == EditorInfo.IME_ACTION_DONE) {
+                    verificar(); true
+                } else false
+            }
+        }
+        d.show()
+    }
+
+    /** Crea o cambia el PIN de configuración (4 a 8 números). */
+    private fun crearPin(alTerminar: (() -> Unit)?) {
+        val v = layoutInflater.inflate(R.layout.dialog_pin, null)
+        val campo = v.findViewById<EditText>(R.id.pinCampo)
+        val confirmar = v.findViewById<EditText>(R.id.pinConfirmar)
+        val error = v.findViewById<TextView>(R.id.pinError)
+        v.findViewById<View>(R.id.pinConfirmarCaja).visibility = View.VISIBLE
+        v.findViewById<TextView>(R.id.pinMensaje).text =
+            "Cree un PIN para proteger la configuración: modo de operación, servidor, listado, anulaciones y borrados. Solo debe conocerlo el administrador."
+        val d = MaterialAlertDialogBuilder(this)
+            .setTitle("Crear PIN de configuración")
+            .setView(v)
+            .setPositiveButton("Guardar PIN", null)
+            .setNegativeButton("Cancelar", null)
+            .create()
+        d.setOnShowListener {
+            campo.requestFocus()
+            d.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+            d.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val a = campo.text.toString()
+                val b = confirmar.text.toString()
+                when {
+                    !Pin.formatoValido(a) -> {
+                        error.text = "El PIN debe tener de 4 a 8 números."
+                        error.visibility = View.VISIBLE
+                    }
+                    a != b -> {
+                        error.text = "Los dos PIN no coinciden."
+                        error.visibility = View.VISIBLE
+                    }
+                    else -> {
+                        ajustes.crearPin(a)
+                        pinValidoHasta = SystemClock.elapsedRealtime() + 2 * 60_000L
+                        d.dismiss()
+                        toast("PIN guardado.")
+                        alTerminar?.invoke()
+                    }
+                }
+            }
+        }
+        d.show()
+    }
+
+    /** «Olvidé el PIN»: se confirma con la clave de desbloqueo del equipo y se crea uno nuevo. */
+    @Suppress("DEPRECATION")
+    private fun olvidePin(seguir: () -> Unit) {
+        val km = getSystemService(KeyguardManager::class.java)
+        val i = if (km != null && km.isDeviceSecure) {
+            km.createConfirmDeviceCredentialIntent("Restablecer el PIN", "Confirme con la clave del equipo para crear un PIN nuevo")
+        } else null
+        if (i == null) {
+            mostrarError("No se puede restablecer", "Este equipo no tiene clave de bloqueo. Configure una en los ajustes del equipo para poder restablecer el PIN.")
+            return
+        }
+        despuesDeRestablecer = seguir
+        Bloqueo.autenticando = true
+        try {
+            restablecerPin.launch(i)
+        } catch (e: Exception) {
+            Bloqueo.autenticando = false
+            despuesDeRestablecer = null
+        }
+    }
+
+    private fun explicarModo() {
+        val q = Operacion.accionPara(Operacion.Origen.QR) == Operacion.Accion.VALIDAR
+        val p = Operacion.accionPara(Operacion.Origen.PLACA) == Operacion.Accion.VALIDAR
+        fun que(validar: Boolean) = if (validar) "solo VALIDA el acceso (momento 1, en la vía)" else "REGISTRA el ingreso e imprime el ticket (momento 2, adentro)"
+        MaterialAlertDialogBuilder(this)
+            .setTitle(Operacion.descripcionModo())
+            .setMessage(
+                "Este equipo trabaja así:\n\n• Al leer el QR: ${que(q)}.\n• Al leer la placa: ${que(p)}.\n\n" +
+                    (if (ajustes.exigirValidacion) "Adentro NO se da ingreso a quien no pasó antes por la vía.\n\n" else "") +
+                    "El administrador puede cambiarlo en Ajustes con su PIN."
+            )
+            .setPositiveButton("Entendido", null)
+            .setNeutralButton("Cambiar (PIN)") { _, _ -> mostrarAjustes() }
+            .show()
+    }
+
+    // ---------------------------------------------------------------- alertas
+
+    private fun mostrarAlertas() {
+        val items = Alertas.todas(this)
+        val l = listado
+        val atrasados = l?.validados()?.filter { Operacion.minutosEsperando(it) >= ajustes.minutosEspera }.orEmpty()
+        if (items.isEmpty() && atrasados.isEmpty()) {
+            toast("No hay alertas."); return
+        }
+        val sb = StringBuilder()
+        if (l != null && atrasados.isNotEmpty()) {
+            sb.append("VALIDADOS EN LA VÍA SIN INGRESAR (más de ${ajustes.minutosEspera} min):\n")
+            atrasados.take(15).forEach { f ->
+                sb.append("• ").append(l.titulo(f)).append(" · hace ").append(Operacion.minutosEsperando(f)).append(" min\n")
+            }
+            sb.append('\n')
+        }
+        items.take(60).forEach { a ->
+            sb.append(fmtFecha.format(Date(a.t))).append(" · ").append(Alertas.titulo(a.motivo)).append('\n')
+            val quien = listOf(a.placa, a.nombre).filter { it.isNotBlank() }.joinToString(" · ")
+            if (quien.isNotBlank()) sb.append(quien).append('\n')
+            if (a.detalle.isNotBlank()) sb.append(a.detalle).append('\n')
+            sb.append('\n')
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Alertas (${items.size})")
+            .setMessage(sb.toString().trim())
+            .setPositiveButton("Cerrar", null)
+            .setNegativeButton("Borrar lista") { _, _ -> conPin { Alertas.borrar(this); refrescar() } }
             .show()
     }
 
@@ -1171,7 +1576,12 @@ class MainActivity : AppCompatActivity() {
 
         txtContador.text = dentro.toString()
         txtTotal.text = " / $total ingresados"
-        txtFaltan.text = if (total > 0) "${total - dentro} pendientes" else ""
+        val nValidados = l?.cantidadValidados() ?: 0
+        txtFaltan.text = when {
+            total == 0 -> ""
+            nValidados > 0 -> "${total - dentro} por ingresar · $nValidados validados esperando"
+            else -> "${total - dentro} pendientes"
+        }
         progreso.setProgressCompat(if (total == 0) 0 else dentro * 100 / total, true)
 
         refrescarEstado()
@@ -1186,6 +1596,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun refrescarEstado() {
         if (!::chipImpresora.isInitialized) return
+        chipModo.text = punto(Operacion.descripcionModo(), true)
+        val nAlertas = Alertas.cantidad(this)
+        chipAlertas.visibility = if (nAlertas > 0) View.VISIBLE else View.GONE
+        chipAlertas.text = punto("$nAlertas alertas", false)
         chipImpresora.text = punto(if (Impresora.esSunmi) "Impresora Sunmi" else "Sin impresora Sunmi", Impresora.esSunmi)
         val lector = EscanerSunmi.disponible && ajustes.usarLectorSunmi
         chipLector.text = punto(if (lector) "Lector Sunmi" else "QR por cámara", lector)
@@ -1208,10 +1622,16 @@ class MainActivity : AppCompatActivity() {
         val q = edtPlaca.text?.toString().orEmpty()
         val total = l?.filas?.size ?: 0
         val dentro = l?.ingresos?.size ?: 0
-        segPendientes.text = "Pendientes · ${total - dentro}"
-        segIngresados.text = "Ingresados · $dentro"
+        val nVal = l?.cantidadValidados() ?: 0
+        segPendientes.text = "Pendientes ${(total - dentro - nVal).coerceAtLeast(0)}"
+        segValidados.text = "Validados $nVal"
+        segIngresados.text = "Ingresados $dentro"
         val buscando = q.isNotBlank()
-        listOf(segPendientes to !verIngresados, segIngresados to verIngresados).forEach { (v, sel) ->
+        listOf(
+            segPendientes to (verLista == Vista.PENDIENTES),
+            segValidados to (verLista == Vista.VALIDADOS),
+            segIngresados to (verLista == Vista.INGRESADOS)
+        ).forEach { (v, sel) ->
             val activo = sel && !buscando
             v.setBackgroundResource(if (activo) R.drawable.tab_activa else R.drawable.tab_inactiva)
             v.setTextColor(getColor(if (activo) R.color.negro else R.color.texto_suave))
@@ -1220,7 +1640,8 @@ class MainActivity : AppCompatActivity() {
         val filas: List<Int> = when {
             l == null -> emptyList()
             buscando -> l.buscarTexto(q, 200)
-            verIngresados -> l.ingresados()
+            verLista == Vista.INGRESADOS -> l.ingresados()
+            verLista == Vista.VALIDADOS -> l.validados()
             else -> l.pendientes()
         }
         adaptador.actualizar(filas)
@@ -1228,7 +1649,8 @@ class MainActivity : AppCompatActivity() {
         txtVacio.text = when {
             l == null -> "No hay listado de reservas.\nToque ⋮ arriba a la derecha para cargar el Excel, recibirlo por Bluetooth o traerlo del servidor."
             buscando -> "No hay reservas con «${q.trim()}».\nRevise la placa o busque por nombre o código."
-            verIngresados -> "Aún no hay ingresos.\nUse los botones de abajo para escanear el QR o leer la placa."
+            verLista == Vista.INGRESADOS -> "Aún no hay ingresos.\nUse los botones de abajo para escanear el QR o leer la placa."
+            verLista == Vista.VALIDADOS -> "No hay vehículos validados esperando.\nAquí aparecen los que ya pasaron por la vía y todavía no reciben ticket adentro."
             else -> "¡Todas las reservas ya ingresaron!"
         }
     }

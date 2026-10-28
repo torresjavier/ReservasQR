@@ -47,14 +47,25 @@ class ReservaAdapter(
         h.vip.visibility = if (l.esVip(f)) View.VISIBLE else View.GONE
 
         val t = l.ingresos[f]
-        if (t != null) {
-            h.hora.text = "✓ " + hora.format(Date(t))
-            h.hora.setTextColor(ctx.getColor(R.color.blanco))
-        } else {
-            h.hora.text = "PENDIENTE"
-            h.hora.setTextColor(ctx.getColor(R.color.rojo))
+        val v = l.validaciones[f]
+        when {
+            t != null -> {
+                h.hora.text = "✓ " + hora.format(Date(t))
+                h.hora.setTextColor(ctx.getColor(R.color.blanco))
+            }
+            v != null -> {
+                // Validado en la vía y todavía sin ticket adentro; en rojo si lleva demasiado esperando
+                val min = Operacion.minutosEsperando(f)
+                val tarde = min >= Operacion.ajustes.minutosEspera
+                h.hora.text = "VALIDADO\n" + (if (tarde) "hace $min min" else hora.format(Date(v)))
+                h.hora.setTextColor(ctx.getColor(if (tarde) R.color.rojo else R.color.blanco))
+            }
+            else -> {
+                h.hora.text = "PENDIENTE"
+                h.hora.setTextColor(ctx.getColor(R.color.rojo))
+            }
         }
-        h.foto.visibility = if (Operacion.info[f]?.foto != null) View.VISIBLE else View.GONE
+        h.foto.visibility = if ((Operacion.info[f]?.foto ?: Operacion.infoVal[f]?.foto) != null) View.VISIBLE else View.GONE
 
         h.nombre.text = l.valor(f, Listado.Campo.NOMBRE).ifBlank { l.titulo(f) }
         val partes = listOf(

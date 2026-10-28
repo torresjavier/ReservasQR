@@ -49,6 +49,8 @@ public final class Listado {
     public final int[] columnas = new int[Campo.values().length];
     /** fila → momento del ingreso (ms). */
     public final Map<Integer, Long> ingresos = new HashMap<>();
+    /** fila → momento en que se validó en la vía (primer momento), antes de ingresar y recibir el ticket. */
+    public final Map<Integer, Long> validaciones = new HashMap<>();
 
     private Map<String, List<Integer>> idxCodigo = new HashMap<>();
     private Map<String, List<Integer>> idxPlaca = new HashMap<>();
@@ -388,22 +390,57 @@ public final class Listado {
         return l;
     }
 
+    /** Reservas que aún no pasan por la vía ni han ingresado. */
     public List<Integer> pendientes() {
         List<Integer> l = new ArrayList<>();
-        for (int i = 0; i < filas.size(); i++) if (!ingresos.containsKey(i)) l.add(i);
+        for (int i = 0; i < filas.size(); i++) if (!ingresos.containsKey(i) && !validaciones.containsKey(i)) l.add(i);
         return l;
+    }
+
+    public boolean validado(int fila) {
+        return validaciones.containsKey(fila);
+    }
+
+    /** Validadas en la vía que todavía no reciben ticket adentro; las que llevan más tiempo esperando, primero. */
+    public List<Integer> validados() {
+        List<Integer> l = new ArrayList<>();
+        for (Integer f : validaciones.keySet()) if (!ingresos.containsKey(f)) l.add(f);
+        l.sort((a, b) -> Long.compare(validaciones.get(a), validaciones.get(b)));
+        return l;
+    }
+
+    public int cantidadValidados() {
+        int n = 0;
+        for (Integer f : validaciones.keySet()) if (!ingresos.containsKey(f)) n++;
+        return n;
+    }
+
+    /** Busca una reserva por su código o, si no hay código, por su placa exacta. -1 si no existe. */
+    public int buscarFila(String codigo, String placa) {
+        if (codigo != null && !codigo.trim().isEmpty()) {
+            List<Integer> x = idxCodigo.get(normalizar(codigo));
+            if (x != null && !x.isEmpty()) return x.get(0);
+        }
+        if (placa != null && !placa.trim().isEmpty()) {
+            List<Integer> x = idxPlaca.get(normPlaca(placa));
+            if (x != null && !x.isEmpty()) return x.get(0);
+        }
+        return -1;
     }
 
     public List<List<String>> paraExportar(java.text.DateFormat formato) {
         List<List<String>> out = new ArrayList<>(filas.size() + 1);
         List<String> enc = new ArrayList<>(encabezados);
         enc.add("ESTADO");
+        enc.add("HORA_VALIDACION");
         enc.add("HORA_INGRESO");
         out.add(enc);
         for (int i = 0; i < filas.size(); i++) {
             List<String> f = new ArrayList<>(filas.get(i));
             Long t = ingresos.get(i);
-            f.add(t != null ? "INGRESADO" : "PENDIENTE");
+            Long v = validaciones.get(i);
+            f.add(t != null ? "INGRESADO" : (v != null ? "VALIDADO" : "PENDIENTE"));
+            f.add(v != null ? formato.format(new java.util.Date(v)) : "");
             f.add(t != null ? formato.format(new java.util.Date(t)) : "");
             out.add(f);
         }

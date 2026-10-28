@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -17,9 +18,14 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Centro de la operación: listado, ingresos (con foto), ticket y cola de envío.
+ * Centro de la operación: listado, validaciones en la vía, ingresos con ticket, alertas y cola de envío.
  * Lo usan la pantalla principal, la cámara de placas y los procesos en segundo plano.
  * Todo cambio se hace en el hilo principal.
+ *
+ * La operación tiene DOS MOMENTOS:
+ *  1. VÍA: se lee el QR o la placa y solo se VALIDA (da acceso). Rápido, sin detener el carro.
+ *  2. INTERIOR: ya adentro se lee otra vez, se INGRESA la reserva y se imprime el ticket.
+ * Qué hace cada lector (QR / placa) se configura en Ajustes con el PIN.
  */
 object Operacion {
 
@@ -27,10 +33,22 @@ object Operacion {
         QR("QR"), BUSQUEDA("BUSQUEDA_MANUAL"), PLACA("PLACA_CAMARA")
     }
 
-    sealed class Registro {
-        data class Nuevo(val fila: Int) : Registro()
-        data class Repetido(val fila: Int, val hora: Long) : Registro()
+    enum class Accion { VALIDAR, INGRESAR }
+
+    /** Qué pasó al procesar una lectura. [aviso] es una advertencia que no impide el paso. */
+    sealed class Resultado {
+        abstract val fila: Int
+        data class Validado(override val fila: Int, val aviso: String?) : Resultado()
+        data class YaValidado(override val fila: Int, val hora: Long, val sospechoso: Boolean) : Resultado()
+        data class Ingresado(override val fila: Int, val sinValidar: Boolean, val aviso: String?) : Resultado()
+        data class YaIngreso(override val fila: Int, val hora: Long) : Resultado()
+        /** Adentro se exige haber pasado por la vía y esta reserva no pasó. */
+        data class SinValidacion(override val fila: Int) : Resultado()
     }
+
+    /** Dos lecturas iguales dentro de este tiempo se consideran la misma persona (no es una repetición sospechosa). */
+    private const val DUPLICADO_MS = 20_000L
+    private const val ENFRIA_ALERTA_MS = 30_000L
 
     private var iniciado = false
     lateinit var app: Context
@@ -40,12 +58,16 @@ object Operacion {
 
     @Volatile var listado: Listado? = null
         private set
+    /** Datos del ingreso (con ticket) de cada fila. */
     val info = HashMap<Int, InfoIngreso>()
+    /** Datos de la validación en la vía de cada fila. */
+    val infoVal = HashMap<Int, InfoIngreso>()
 
     private val escuchas = CopyOnWriteArrayList<() -> Unit>()
     private val main = Handler(Looper.getMainLooper())
     private val co = Locale("es", "CO")
     private val fmtFecha = SimpleDateFormat("dd/MM/yyyy hh:mm a", co)
+    private val alertaReciente = HashMap<String, Long>()
 
     private val archivo: File get() = File(app.filesDir, "reservas.json")
     private val dirFotos: File get() = File(app.filesDir, "fotos").apply { mkdirs() }
@@ -55,10 +77,13 @@ object Operacion {
         if (iniciado) return
         app = ctx.applicationContext
         ajustes = Ajustes(app)
-        val (l, inf) = Persistencia.cargar(archivo)
-        listado = l
-        info.putAll(inf)
+        val d = Persistencia.cargar(archivo)
+        listado = d.listado
+        info.putAll(d.info)
+        infoVal.putAll(d.infoVal)
         iniciado = true
+        Sincronizacion.escucharRed(app)
+        Sincronizacion.iniciarLatido(app)
     }
 
     // ---------------------------------------------------------------- avisos a las pantallas
@@ -82,8 +107,30 @@ object Operacion {
 
     fun guardar() {
         try {
-            Persistencia.guardar(archivo, listado, info)
+            Persistencia.guardar(archivo, listado, info, infoVal)
         } catch (_: Exception) {
+        }
+    }
+
+    // ---------------------------------------------------------------- modo de trabajo
+
+    fun accionPara(origen: Origen): Accion {
+        val v = when (origen) {
+            Origen.QR -> ajustes.accionQr
+            Origen.PLACA, Origen.BUSQUEDA -> ajustes.accionPlaca
+        }
+        return if (v == Accion.VALIDAR.name) Accion.VALIDAR else Accion.INGRESAR
+    }
+
+    /** Texto corto para la pantalla principal: qué hace este equipo. */
+    fun descripcionModo(): String {
+        val q = accionPara(Origen.QR)
+        val p = accionPara(Origen.PLACA)
+        return when {
+            q == Accion.VALIDAR && p == Accion.VALIDAR -> "VÍA · solo valida"
+            q == Accion.INGRESAR && p == Accion.INGRESAR -> "INTERIOR · registra e imprime"
+            q == Accion.VALIDAR -> "MIXTO · QR valida, placa registra"
+            else -> "MIXTO · QR registra, placa valida"
         }
     }
 
@@ -92,6 +139,7 @@ object Operacion {
     fun reemplazarListado(l: Listado) {
         listado = l
         info.clear()
+        infoVal.clear()
         dirFotos.listFiles()?.forEach { it.delete() }
         guardar()
         avisar()
@@ -106,30 +154,180 @@ object Operacion {
         return r
     }
 
-    // ---------------------------------------------------------------- ingresos
+    /**
+     * El servidor puede decir en qué estado está cada reserva (VALIDADA / INGRESADA) según lo que
+     * enviaron los otros equipos. Así el equipo de adentro sabe quién ya pasó por la vía.
+     * Solo avanza el estado (pendiente → validada → ingresada) y no toca lo que este equipo aún no ha enviado.
+     */
+    fun aplicarEstados(lista: JSONArray): Int {
+        val l = listado ?: return 0
+        val enCola = Bandeja.claves(app)
+        var cambios = 0
+        for (i in 0 until lista.length()) {
+            val o = lista.optJSONObject(i) ?: continue
+            val estado = o.optString("estado", "").uppercase(Locale.ROOT)
+            if (estado.isEmpty()) continue
+            val codigo = primero(o, "codigo_reserva", "codigo", "reserva", "id_reserva", "id")
+            val placa = primero(o, "placa")
+            val fila = l.buscarFila(codigo, placa)
+            if (fila < 0) continue
+            if (clave(codigo) in enCola || clave(placa) in enCola) continue
+            if (estado.startsWith("INGRES")) {
+                if (!l.ingresos.containsKey(fila)) {
+                    l.ingresos[fila] = analizarIso(o.optString("fecha_ingreso", "")) ?: System.currentTimeMillis()
+                    cambios++
+                }
+            } else if (estado.startsWith("VALID")) {
+                if (!l.ingresos.containsKey(fila) && !l.validaciones.containsKey(fila)) {
+                    l.validaciones[fila] = analizarIso(o.optString("fecha_validacion", "")) ?: System.currentTimeMillis()
+                    cambios++
+                }
+            }
+        }
+        if (cambios > 0) {
+            guardar()
+            avisar()
+        }
+        return cambios
+    }
 
-    fun registrar(fila: Int, origen: Origen, placaLeida: String? = null, foto: Bitmap? = null): Registro {
+    private fun primero(o: JSONObject, vararg claves: String): String {
+        for (k in claves) {
+            if (o.has(k) && !o.isNull(k)) {
+                val v = o.optString(k, "")
+                if (v.isNotBlank()) return v
+            }
+        }
+        return ""
+    }
+
+    fun clave(s: String): String = Listado.normPlaca(s)
+
+    // ---------------------------------------------------------------- lecturas: validar o ingresar
+
+    /**
+     * Procesa una lectura (QR, placa de la cámara o búsqueda manual) según el modo del equipo.
+     * @param tipoVisto tipo de vehículo que vio la cámara (carro/moto), si se sabe
+     * @param forzar    el operador decidió ingresar aunque no haya pasado por la vía
+     * @param accion    para ignorar el modo del equipo (por ejemplo, ingresar a mano desde la lista)
+     */
+    fun procesar(
+        fila: Int,
+        origen: Origen,
+        placaLeida: String? = null,
+        foto: Bitmap? = null,
+        tipoVisto: OcrPlaca.Tipo? = null,
+        forzar: Boolean = false,
+        accion: Accion? = null
+    ): Resultado {
         val l = listado ?: throw IllegalStateException("No hay listado")
-        l.ingresos[fila]?.let { return Registro.Repetido(fila, it) }
+        l.ingresos[fila]?.let { return Resultado.YaIngreso(fila, it) }
+        val ahora = System.currentTimeMillis()
+        val aviso = avisoTipo(fila, tipoVisto, placaLeida, foto)
+
+        if ((accion ?: accionPara(origen)) == Accion.VALIDAR) {
+            val previa = l.validaciones[fila]
+            if (previa != null) {
+                val sospechoso = ahora - previa > DUPLICADO_MS
+                if (sospechoso) {
+                    alerta(
+                        Alertas.REPETIDA_EN_VIA, fila, placaLeida.orEmpty(), foto,
+                        "Ya se había validado a las ${hora(previa)}. Puede ser un QR o una placa repetida."
+                    )
+                }
+                return Resultado.YaValidado(fila, previa, sospechoso)
+            }
+            validar(fila, origen, placaLeida, foto)
+            return Resultado.Validado(fila, aviso)
+        }
+
+        val validada = l.validaciones.containsKey(fila)
+        if (!validada && ajustes.exigirValidacion && !forzar) {
+            alerta(
+                Alertas.BLOQUEADO_SIN_VALIDAR, fila, placaLeida.orEmpty(), foto,
+                "Intentó ingresar sin haber sido validado en la vía."
+            )
+            return Resultado.SinValidacion(fila)
+        }
+        ingresar(fila, origen, placaLeida, foto)
+        if (!validada) {
+            alerta(
+                Alertas.INGRESO_SIN_VALIDAR, fila, placaLeida.orEmpty(), null,
+                "Se registró adentro sin pasar antes por la vía."
+            )
+        }
+        return Resultado.Ingresado(fila, !validada, aviso)
+    }
+
+    private fun validar(fila: Int, origen: Origen, placaLeida: String?, foto: Bitmap?) {
+        val l = listado ?: return
+        val ahora = System.currentTimeMillis()
+        l.validaciones[fila] = ahora
+        val id = UUID.randomUUID().toString()
+        val archivoFoto = foto?.let { guardarFoto(id, it) }
+        infoVal[fila] = InfoIngreso(id, origen.api, placaLeida.orEmpty(), archivoFoto)
+        guardar()
+        if (ajustes.enviarAlValidar) {
+            val e = nuevoEvento("VALIDACION", fila, "VALIDADA", "VIA")
+            e.put("id_validacion", id)
+            e.put("fecha_validacion", iso(ahora))
+            e.put("origen", origen.api)
+            e.put("placa_leida", placaLeida.orEmpty())
+            if (archivoFoto != null) e.put("foto_archivo", archivoFoto)
+            Bandeja.agregar(app, e)
+            Sincronizacion.alRegistrar(app)
+        }
+        avisar()
+    }
+
+    private fun ingresar(fila: Int, origen: Origen, placaLeida: String?, foto: Bitmap?) {
+        val l = listado ?: return
         val ahora = System.currentTimeMillis()
         l.ingresos[fila] = ahora
         val id = UUID.randomUUID().toString()
         val archivoFoto = foto?.let { guardarFoto(id, it) }
         info[fila] = InfoIngreso(id, origen.api, placaLeida.orEmpty(), archivoFoto)
         guardar()
-        Bandeja.agregar(app, evento(fila, "INGRESO"))
+        val e = nuevoEvento("INGRESO", fila, "INGRESADA", "INTERIOR")
+        e.put("id_ingreso", id)
+        e.put("fecha_ingreso", iso(ahora))
+        l.validaciones[fila]?.let {
+            e.put("validado_en_via", true)
+            e.put("fecha_validacion", iso(it))
+        } ?: e.put("validado_en_via", false)
+        e.put("origen", origen.api)
+        e.put("placa_leida", placaLeida.orEmpty())
+        if (archivoFoto != null) e.put("foto_archivo", archivoFoto)
+        Bandeja.agregar(app, e)
         Sincronizacion.alRegistrar(app)
         avisar()
-        return Registro.Nuevo(fila)
     }
 
+    /** Anula el ingreso (vuelve a «validada» si había pasado por la vía) o, si solo estaba validada, la validación. */
     fun anular(fila: Int) {
         val l = listado ?: return
-        if (!l.ingresado(fila)) return
-        Bandeja.agregar(app, evento(fila, "ANULACION"))
-        l.ingresos.remove(fila)
-        info.remove(fila)?.foto?.let { File(app.filesDir, it).delete() }
+        val e: JSONObject
+        if (l.ingresado(fila)) {
+            val previo = info[fila]
+            val tiempo = l.ingresos[fila]
+            l.ingresos.remove(fila)
+            e = nuevoEvento("ANULACION", fila, if (l.validado(fila)) "VALIDADA" else "PENDIENTE", "INTERIOR")
+            e.put("anula", "INGRESO")
+            e.put("id_ingreso", previo?.id ?: "")
+            if (tiempo != null) e.put("fecha_ingreso", iso(tiempo))
+            info.remove(fila)?.foto?.let { File(app.filesDir, it).delete() }
+        } else if (l.validado(fila)) {
+            val previo = infoVal[fila]
+            val tiempo = l.validaciones[fila]
+            l.validaciones.remove(fila)
+            e = nuevoEvento("ANULACION", fila, "PENDIENTE", "VIA")
+            e.put("anula", "VALIDACION")
+            e.put("id_validacion", previo?.id ?: "")
+            if (tiempo != null) e.put("fecha_validacion", iso(tiempo))
+            infoVal.remove(fila)?.foto?.let { File(app.filesDir, it).delete() }
+        } else return
         guardar()
+        Bandeja.agregar(app, e)
         Sincronizacion.alRegistrar(app)
         avisar()
     }
@@ -137,14 +335,90 @@ object Operacion {
     fun borrarIngresos() {
         val l = listado ?: return
         l.ingresos.clear()
+        l.validaciones.clear()
         info.clear()
+        infoVal.clear()
         dirFotos.listFiles()?.forEach { it.delete() }
         guardar()
         avisar()
     }
 
     fun foto(fila: Int): File? =
-        info[fila]?.foto?.let { File(app.filesDir, it) }?.takeIf { it.exists() }
+        (info[fila]?.foto ?: infoVal[fila]?.foto)?.let { File(app.filesDir, it) }?.takeIf { it.exists() }
+
+    // ---------------------------------------------------------------- alertas (intentos de colarse)
+
+    /** Advierte si la cámara ve una placa de carro y la reserva es de moto (o al revés). No bloquea. */
+    private fun avisoTipo(fila: Int, tipoVisto: OcrPlaca.Tipo?, placaLeida: String?, foto: Bitmap?): String? {
+        val l = listado ?: return null
+        if (tipoVisto == null) return null
+        val placa = l.placaNormal(fila)
+        if (placa.length < 5) return null
+        val esperado = OcrPlaca.tipoDePlaca(placa)
+        if (esperado == tipoVisto) return null
+        val txt = "La cámara ve una placa de ${nombreTipo(tipoVisto)} y la reserva es de ${nombreTipo(esperado)}. Revise el vehículo."
+        alerta(Alertas.TIPO_NO_COINCIDE, fila, placaLeida.orEmpty(), foto, txt)
+        return txt
+    }
+
+    fun nombreTipo(t: OcrPlaca.Tipo) = if (t == OcrPlaca.Tipo.MOTO) "MOTO" else "CARRO"
+
+    /**
+     * Lectura que no está en el listado: en la vía es alguien sin reserva; adentro, un vehículo que se coló.
+     * Devuelve true si se registró la alerta (no se repite para la misma placa durante 30 s).
+     */
+    fun alertaSinReserva(origen: Origen, textoLeido: String, foto: Bitmap?): Boolean {
+        val motivo = if (accionPara(origen) == Accion.VALIDAR) Alertas.SIN_RESERVA_VIA else Alertas.SIN_RESERVA_INTERIOR
+        val detalle = if (motivo == Alertas.SIN_RESERVA_VIA) "Quiso pasar sin reserva en el listado." else "Hay un vehículo adentro sin reserva en el listado."
+        return alerta(motivo, null, textoLeido, foto, detalle)
+    }
+
+    fun alerta(motivo: String, fila: Int?, textoLeido: String, foto: Bitmap?, detalle: String): Boolean {
+        val l = listado
+        val k = motivo + ":" + (fila?.toString() ?: Listado.normPlaca(textoLeido))
+        val ahora = System.currentTimeMillis()
+        if ((alertaReciente[k] ?: 0L) > ahora) return false
+        if (alertaReciente.size > 500) alertaReciente.entries.removeAll { it.value < ahora }
+        alertaReciente[k] = ahora + ENFRIA_ALERTA_MS
+
+        val placa = if (fila != null && l != null) l.placaNormal(fila) else Listado.normPlaca(textoLeido)
+        val nombre = if (fila != null && l != null) l.valor(fila, Listado.Campo.NOMBRE) else ""
+        Alertas.agregar(app, motivo, placa, nombre, detalle)
+        if (ajustes.enviarAlertas) {
+            val e = nuevoEvento("ALERTA", fila, if (fila != null) estadoActual(fila) else "SIN_RESERVA", momentoActual())
+            e.put("motivo", motivo)
+            e.put("detalle", detalle)
+            e.put("placa_leida", textoLeido)
+            if (fila == null) e.put("placa", Listado.normPlaca(textoLeido))
+            if (foto != null) guardarFoto(e.getString("id_evento"), foto)?.let { e.put("foto_archivo", it) }
+            Bandeja.agregar(app, e)
+            Sincronizacion.alRegistrar(app)
+        }
+        avisar()
+        return true
+    }
+
+    private fun momentoActual(): String =
+        if (accionPara(Origen.PLACA) == Accion.VALIDAR && accionPara(Origen.QR) == Accion.VALIDAR) "VIA" else "INTERIOR"
+
+    fun estadoActual(fila: Int): String {
+        val l = listado ?: return "PENDIENTE"
+        return when {
+            l.ingresos.containsKey(fila) -> "INGRESADA"
+            l.validaciones.containsKey(fila) -> "VALIDADA"
+            else -> "PENDIENTE"
+        }
+    }
+
+    /** Minutos que lleva esperando una reserva validada sin ingresar (0 si no aplica). */
+    fun minutosEsperando(fila: Int): Long {
+        val l = listado ?: return 0
+        val v = l.validaciones[fila] ?: return 0
+        if (l.ingresos.containsKey(fila)) return 0
+        return (System.currentTimeMillis() - v) / 60_000L
+    }
+
+    // ---------------------------------------------------------------- fotos y eventos
 
     private fun guardarFoto(id: String, bmp: Bitmap): String? = try {
         val max = 1024
@@ -157,33 +431,45 @@ object Operacion {
         null
     }
 
-    /** Registro tal como se envía al servidor (la foto se adjunta al enviar). */
-    private fun evento(fila: Int, tipo: String): JSONObject {
-        val l = listado!!
-        val i = info[fila]
-        val t = l.ingresos[fila] ?: System.currentTimeMillis()
-        return JSONObject().apply {
-            put("id_evento", UUID.randomUUID().toString())
-            put("tipo_evento", tipo)
-            put("id_ingreso", i?.id ?: "")
-            put("codigo_reserva", l.valor(fila, Listado.Campo.CODIGO))
-            put("placa", l.placaNormal(fila))
-            put("nombre", l.valor(fila, Listado.Campo.NOMBRE))
-            put("evento", l.valor(fila, Listado.Campo.EVENTO))
-            put("tipo_cliente", l.valor(fila, Listado.Campo.TIPO).uppercase())
-            put("vip", l.esVip(fila))
-            put("fecha_ingreso", iso(t))
-            put("fecha_evento", iso(System.currentTimeMillis()))
-            put("origen", i?.origen ?: "")
-            put("placa_leida", i?.placaLeida ?: "")
-            put("operador", ajustes.operador)
-            put("dispositivo", ajustes.idDispositivo)
-            put("modelo", Build.MODEL ?: "")
-            put("datos", JSONObject().apply {
+    /** Identificador de la reserva en el servidor (columna id / id_reserva) o, si no hay, su código. */
+    private fun idReserva(fila: Int): String {
+        val l = listado ?: return ""
+        for ((c, h) in l.encabezados.withIndex()) {
+            val n = Listado.normPlaca(h)
+            if (n == "ID" || n == "IDRESERVA" || n == "IDENTIFICADOR" || n == "IDEVENTO") {
+                val v = l.filas[fila][c]
+                if (v.isNotBlank()) return v
+            }
+        }
+        return l.valor(fila, Listado.Campo.CODIGO)
+    }
+
+    /** Datos comunes de todo registro que se envía al servidor (la foto se adjunta al enviar). */
+    private fun nuevoEvento(tipo: String, fila: Int?, estadoDespues: String, momento: String): JSONObject {
+        val l = listado
+        val o = JSONObject()
+        o.put("id_evento", UUID.randomUUID().toString())
+        o.put("tipo_evento", tipo)
+        o.put("momento", momento)
+        o.put("estado_reserva", estadoDespues)
+        o.put("fecha_evento", iso(System.currentTimeMillis()))
+        o.put("operador", ajustes.operador)
+        o.put("dispositivo", ajustes.idDispositivo)
+        o.put("modelo", Build.MODEL ?: "")
+        if (fila != null && l != null && fila < l.filas.size) {
+            o.put("id_reserva", idReserva(fila))
+            o.put("codigo_reserva", l.valor(fila, Listado.Campo.CODIGO))
+            o.put("placa", l.placaNormal(fila))
+            o.put("tipo_vehiculo", if (l.placaNormal(fila).length >= 5) nombreTipo(OcrPlaca.tipoDePlaca(l.placaNormal(fila))) else "")
+            o.put("nombre", l.valor(fila, Listado.Campo.NOMBRE))
+            o.put("evento", l.valor(fila, Listado.Campo.EVENTO))
+            o.put("tipo_cliente", l.valor(fila, Listado.Campo.TIPO).uppercase())
+            o.put("vip", l.esVip(fila))
+            o.put("datos", JSONObject().apply {
                 l.encabezados.forEachIndexed { c, h -> put(h, l.filas[fila][c]) }
             })
-            if (tipo == "INGRESO" && i?.foto != null) put("foto_archivo", i.foto)
         }
+        return o
     }
 
     fun iso(t: Long): String {
@@ -192,17 +478,37 @@ object Operacion {
         return f.format(Date(t))
     }
 
+    fun analizarIso(s: String): Long? {
+        if (s.isBlank()) return null
+        val patrones = arrayOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX", "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        )
+        for (p in patrones) {
+            try {
+                val f = SimpleDateFormat(p, Locale.ROOT)
+                if (p.endsWith("'Z'")) f.timeZone = TimeZone.getTimeZone("UTC")
+                val d = f.parse(s)
+                if (d != null) return d.time
+            } catch (_: Exception) {
+            }
+        }
+        return null
+    }
+
+    private fun hora(t: Long): String = SimpleDateFormat("hh:mm a", co).format(Date(t))
+
     // ---------------------------------------------------------------- ticket
 
-    fun lineasTicket(fila: Int, reimpresion: Boolean): List<Linea> {
+    fun lineasTicket(fila: Int, reimpresion: Boolean, titulo: String = "RESERVA INGRESADA"): List<Linea> {
         val l = listado ?: return emptyList()
-        val t = l.ingresos[fila] ?: System.currentTimeMillis()
+        val t = l.ingresos[fila] ?: l.validaciones[fila] ?: System.currentTimeMillis()
         val nombre = l.valor(fila, Listado.Campo.NOMBRE)
         val evento = l.valor(fila, Listado.Campo.EVENTO)
         val codigo = l.valor(fila, Listado.Campo.CODIGO)
         return Ticket.lineas(
             negocio = ajustes.negocio,
-            titulo = "RESERVA INGRESADA",
+            titulo = titulo,
             nombre = nombre,
             codigo = codigo,
             placa = l.valor(fila, Listado.Campo.PLACA),
@@ -217,6 +523,9 @@ object Operacion {
             operador = ajustes.operador.takeIf { it != "Operador" }.orEmpty()
         )
     }
+
+    /** Comprobante corto de la vía («ACCESO VALIDADO»). */
+    fun lineasValidacion(fila: Int): List<Linea> = lineasTicket(fila, false, "ACCESO VALIDADO")
 
     fun lineasPrueba(): List<Linea> = Ticket.lineas(
         negocio = ajustes.negocio,

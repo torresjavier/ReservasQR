@@ -1,8 +1,8 @@
 // Servidor de ejemplo para Reservas QR (Node.js 18+, sin librerías externas).
 //
-//   POST /api/registros   ← la app envía los ingresos (con foto) en lotes de máximo 10
-//   GET  /api/registros   → ver los ingresos recibidos
-//   GET  /api/reservas    → la app descarga reservas nuevas o cambiadas (?desde=fecha)
+//   POST /api/registros   ← la app envía validaciones (vía), ingresos (interior), anulaciones y alertas, con foto, en lotes de 5/10/20
+//   GET  /api/registros   → ver los registros recibidos (?tipo=ALERTA|VALIDACION|INGRESO|ANULACION)
+//   GET  /api/reservas    → la app descarga reservas nuevas o cambiadas, con su estado (?desde=fecha)
 //   POST /api/reservas    ← usted (u otro sistema) agrega o actualiza reservas sin Excel
 //   GET  /fotos/<archivo> → foto de un ingreso
 //   GET  /                → página sencilla para ver los últimos ingresos
@@ -70,6 +70,8 @@ async function recibirRegistros(req, res) {
   const cuerpo = JSON.parse(await leerCuerpo(req));
   const lista = Array.isArray(cuerpo.registros) ? cuerpo.registros : [];
   const guardados = leer(ARCH_REG, []);
+  const reservas = leer(ARCH_RES, []);
+  let cambioReservas = false;
   const vistos = new Set(guardados.map((r) => r.id_evento));
   const recibidos = [];
   for (const r of lista) {
@@ -85,8 +87,10 @@ async function recibirRegistros(req, res) {
     delete reg.foto;
     guardados.push(reg);
     vistos.add(r.id_evento);
+    if (aplicarEstado(reservas, r)) cambioReservas = true;
   }
   escribir(ARCH_REG, guardados);
+  if (cambioReservas) escribir(ARCH_RES, reservas);
   console.log(`${ahora()}  ${recibidos.length} registros de ${cuerpo.dispositivo || "?"} (${cuerpo.operador || ""})`);
   responder(res, 200, { ok: true, recibidos });
 }
@@ -95,6 +99,38 @@ async function recibirRegistros(req, res) {
 
 function clave(r) {
   return r.codigo_reserva ? "C:" + normal(r.codigo_reserva) : "P:" + normal(r.placa);
+}
+
+// Busca la reserva a la que se refiere un registro: por id, por código o, si no hay código, por placa.
+function buscarReserva(reservas, r) {
+  const id = r.id_reserva ? String(r.id_reserva) : "";
+  const cod = normal(r.codigo_reserva);
+  const pla = normal(r.placa);
+  return reservas.findIndex((x) =>
+    (id && (String(x.id ?? "") === id || String(x.id_reserva ?? "") === id)) ||
+    (cod && normal(x.codigo_reserva) === cod) ||
+    (!cod && pla && normal(x.placa) === pla));
+}
+
+// Actualiza el estado de la reserva (PENDIENTE → VALIDADA → INGRESADA) con lo que informa un equipo.
+// Los demás equipos lo reciben en el siguiente GET /api/reservas. Un registro más viejo que el último aplicado se ignora.
+function aplicarEstado(reservas, r) {
+  if (!["VALIDACION", "INGRESO", "ANULACION"].includes(r.tipo_evento)) return false;
+  const i = buscarReserva(reservas, r);
+  if (i < 0) return false;
+  const t = Date.parse(r.fecha_evento || "") || Date.now();
+  const res = reservas[i];
+  if (res._estado_t && t < res._estado_t) return false;
+  res.estado = r.estado_reserva || res.estado || "PENDIENTE";
+  res._estado_t = t;
+  if (r.tipo_evento === "VALIDACION") res.fecha_validacion = r.fecha_validacion || r.fecha_evento;
+  if (r.tipo_evento === "INGRESO") res.fecha_ingreso = r.fecha_ingreso || r.fecha_evento;
+  if (r.tipo_evento === "ANULACION") {
+    if (r.anula === "INGRESO") delete res.fecha_ingreso;
+    if (r.anula === "VALIDACION") delete res.fecha_validacion;
+  }
+  res._actualizado = ahora();
+  return true;
 }
 
 async function agregarReservas(req, res) {
@@ -107,6 +143,7 @@ async function agregarReservas(req, res) {
     if (!n || (!n.codigo_reserva && !n.placa)) continue;
     const r = { ...n, _actualizado: ahora() };
     const k = clave(r);
+    if (!r.id && !r.id_reserva && !indice.has(k)) r.id = crypto.randomUUID(); // id de la reserva: la app lo devuelve en cada registro (id_reserva)
     if (indice.has(k)) { reservas[indice.get(k)] = { ...reservas[indice.get(k)], ...r }; actualizadas++; }
     else { indice.set(k, reservas.length); reservas.push(r); agregadas++; }
   }
@@ -120,7 +157,7 @@ function entregarReservas(url, res) {
   const todas = leer(ARCH_RES, []);
   const lista = todas
     .filter((r) => isNaN(t) || Date.parse(r._actualizado) > t)
-    .map(({ _actualizado, ...r }) => r); // los campos internos no se envían
+    .map(({ _actualizado, _estado_t, ...r }) => r); // los campos internos no se envían
   responder(res, 200, { hora: ahora(), reservas: lista });
 }
 
@@ -130,11 +167,11 @@ function pagina(url, res) {
   const token = url.searchParams.get("token") || "";
   const regs = leer(ARCH_REG, []).slice(-200).reverse();
   const filas = regs.map((r) => `
-    <tr class="${r.tipo_evento === "ANULACION" ? "anulado" : ""}">
+    <tr class="${r.tipo_evento === "ANULACION" ? "anulado" : ""} ${r.tipo_evento === "ALERTA" ? "alerta" : ""}">
       <td>${html((r.fecha_ingreso || "").replace("T", " ").slice(0, 16))}</td>
       <td><b class="placa">${html(r.placa)}</b>${r.vip ? ' <span class="vip">VIP</span>' : ""}</td>
       <td>${html(r.nombre)}<br><small>${html(r.evento)} · ${html(r.codigo_reserva)}</small></td>
-      <td>${html(r.tipo_evento)}<br><small>${html(r.origen)} · ${html(r.operador)}</small></td>
+      <td>${html(r.tipo_evento)}${r.motivo ? " · " + html(r.motivo) : ""}<br><small>${html(r.momento || "")} · ${html(r.origen || "")} · ${html(r.operador)}${r.detalle ? "<br>" + html(r.detalle) : ""}</small></td>
       <td>${r.foto_url ? `<a href="${r.foto_url}?token=${encodeURIComponent(token)}" target="_blank"><img src="${r.foto_url}?token=${encodeURIComponent(token)}"></a>` : ""}</td>
     </tr>`).join("");
   const cuerpo = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -142,7 +179,7 @@ function pagina(url, res) {
 <style>body{margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif}header{padding:16px;border-bottom:1px solid #262626}
 h1{margin:0;font-size:20px}h1 span{color:#E10600}table{width:100%;border-collapse:collapse}td{padding:10px 16px;border-bottom:1px solid #1a1a1a;vertical-align:top}
 small{color:#9b9b9b}.placa{background:#fff;color:#000;padding:2px 8px;border-radius:6px;font-family:monospace;font-size:16px}
-.vip{background:#E10600;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:700}img{height:56px;border-radius:8px}.anulado{opacity:.45;text-decoration:line-through}</style></head>
+.vip{background:#E10600;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:700}img{height:56px;border-radius:8px}.anulado{opacity:.45;text-decoration:line-through}tr.alerta td{background:#2a0200;border-left:4px solid #E10600}</style></head>
 <body><header><h1>Reservas QR · <span>${regs.length}</span> ingresos recientes</h1><small>Se actualiza cada 30 segundos</small></header>
 <table>${filas || '<tr><td>Aún no han llegado registros.</td></tr>'}</table></body></html>`;
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -157,7 +194,11 @@ http.createServer(async (req, res) => {
     if (!autorizado(req, url)) return responder(res, 401, { ok: false, error: "token inválido" });
     const r = url.pathname.replace(/\/+$/, "") || "/";
     if (req.method === "POST" && r === "/api/registros") return await recibirRegistros(req, res);
-    if (req.method === "GET" && r === "/api/registros") return responder(res, 200, { registros: leer(ARCH_REG, []) });
+    if (req.method === "GET" && r === "/api/registros") {
+      const tipo = (url.searchParams.get("tipo") || "").toUpperCase();
+      const todos = leer(ARCH_REG, []);
+      return responder(res, 200, { registros: tipo ? todos.filter((x) => x.tipo_evento === tipo) : todos });
+    }
     if (req.method === "GET" && r === "/api/reservas") return entregarReservas(url, res);
     if (req.method === "POST" && r === "/api/reservas") return await agregarReservas(req, res);
     if (req.method === "GET" && r.startsWith("/fotos/")) {

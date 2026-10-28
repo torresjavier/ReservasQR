@@ -1,7 +1,11 @@
 package com.javier.reservas
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
@@ -66,14 +70,29 @@ object Bandeja {
         return (0 until minOf(n, a.length())).map { a.getJSONObject(it) }
     }
 
-    @Synchronized fun quitar(ctx: Context, ids: Set<String>) {
+    /** Quita de la cola los registros que el servidor confirmó. Devuelve los que se quitaron. */
+    @Synchronized fun quitar(ctx: Context, ids: Set<String>): List<JSONObject> {
         val a = leer(ctx)
         val queda = JSONArray()
+        val quitados = ArrayList<JSONObject>()
         for (i in 0 until a.length()) {
             val o = a.getJSONObject(i)
-            if (o.optString("id_evento") !in ids) queda.put(o)
+            if (o.optString("id_evento") !in ids) queda.put(o) else quitados.add(o)
         }
         escribir(ctx, queda)
+        return quitados
+    }
+
+    /** Códigos y placas (normalizados) de las reservas que todavía tienen registros sin enviar. */
+    @Synchronized fun claves(ctx: Context): Set<String> {
+        val a = leer(ctx)
+        val r = HashSet<String>()
+        for (i in 0 until a.length()) {
+            val o = a.getJSONObject(i)
+            Operacion.clave(o.optString("codigo_reserva", "")).takeIf { it.isNotEmpty() }?.let { r.add(it) }
+            Operacion.clave(o.optString("placa", "")).takeIf { it.isNotEmpty() }?.let { r.add(it) }
+        }
+        return r
     }
 }
 
@@ -105,11 +124,21 @@ object Http {
     }
 }
 
-/** Programa los envíos y descargas en segundo plano (WorkManager: solo con internet, cuida la batería). */
+/**
+ * Programa los envíos y descargas. Cuida la batería:
+ *  - Solo trabaja con internet (WorkManager con restricción de red; nada de sondeos constantes).
+ *  - Un «latido» cada N minutos (configurable) mientras la app está viva: envía lo pendiente y trae reservas.
+ *  - Al volver el internet envía lo que haya quedado.
+ *  - Aunque la app se cierre, una tarea periódica de Android lo intenta cada 15 minutos.
+ * Si un envío falla, el registro sigue en la cola con el mismo id y se reintenta en el siguiente latido.
+ */
 object Sincronizacion {
 
-    /** Nunca se dejan más de 10 registros esperando: al llegar a ese número se envía de inmediato. */
-    const val MAX_PENDIENTES = 10
+    /** Cantidad de registros que se juntan para enviar un lote (también es el máximo por envío). */
+    val LOTES = intArrayOf(5, 10, 20)
+    /** Minutos entre envíos / descargas. */
+    val INTERVALOS = intArrayOf(1, 2, 5, 10, 15, 30)
+
     private const val ENVIO = "envio_registros"
     private const val ENVIO_PERIODICO = "envio_registros_periodico"
     private const val RESERVAS = "descarga_reservas"
@@ -120,6 +149,10 @@ object Sincronizacion {
     @Volatile var ultimaDescarga: Long = 0L
 
     private val conInternet = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+    private val main = Handler(Looper.getMainLooper())
+    private var latido: Runnable? = null
+    private var redRegistrada = false
+    private var ultimoDisparoRed = 0L
 
     fun configuradoEnvio(ctx: Context) = Ajustes(ctx).urlEnvio.isNotBlank()
     fun configuradoReservas(ctx: Context) = Ajustes(ctx).urlReservas.isNotBlank()
@@ -127,8 +160,7 @@ object Sincronizacion {
     /** Se llama después de cada registro: envía cuando se junta el lote. */
     fun alRegistrar(ctx: Context) {
         if (!configuradoEnvio(ctx)) return
-        val n = Bandeja.cantidad(ctx)
-        if (n >= Ajustes(ctx).loteEnvio || n >= MAX_PENDIENTES) enviarAhora(ctx)
+        if (Bandeja.cantidad(ctx) >= Ajustes(ctx).loteEnvio) enviarAhora(ctx)
     }
 
     fun enviarAhora(ctx: Context) {
@@ -137,6 +169,7 @@ object Sincronizacion {
             .setConstraints(conInternet)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
+        // KEEP: si ya hay un envío en marcha no se interrumpe ni se duplica
         WorkManager.getInstance(ctx).enqueueUniqueWork(ENVIO, ExistingWorkPolicy.KEEP, w)
     }
 
@@ -145,10 +178,10 @@ object Sincronizacion {
         val w = OneTimeWorkRequestBuilder<ReservasWorker>()
             .setConstraints(conInternet)
             .build()
-        WorkManager.getInstance(ctx).enqueueUniqueWork(RESERVAS, ExistingWorkPolicy.REPLACE, w)
+        WorkManager.getInstance(ctx).enqueueUniqueWork(RESERVAS, ExistingWorkPolicy.KEEP, w)
     }
 
-    /** Tareas periódicas (cada 15 min, el mínimo de Android) para enviar lo que quede y traer reservas nuevas. */
+    /** Tareas periódicas de respaldo (cada 15 min, el mínimo de Android) y reinicio del latido con el intervalo actual. */
     fun programar(ctx: Context) {
         val wm = WorkManager.getInstance(ctx)
         if (configuradoEnvio(ctx)) {
@@ -164,10 +197,80 @@ object Sincronizacion {
                 PeriodicWorkRequestBuilder<ReservasWorker>(15, TimeUnit.MINUTES).setConstraints(conInternet).build()
             )
         } else wm.cancelUniqueWork(RESERVAS_PERIODICO)
+
+        iniciarLatido(ctx)
+    }
+
+    // ---------------------------------------------------------------- latido y red
+
+    private fun unaVuelta(ctx: Context) {
+        if (configuradoEnvio(ctx) && Bandeja.cantidad(ctx) > 0) enviarAhora(ctx)
+        if (configuradoReservas(ctx) && Ajustes(ctx).autoReservas) actualizarReservasAhora(ctx)
+    }
+
+    /** Cada N minutos (Ajustes) envía lo pendiente y trae reservas. Solo mueve la red si hay algo que hacer. */
+    fun iniciarLatido(ctx: Context) {
+        val app = ctx.applicationContext
+        latido?.let { main.removeCallbacks(it) }
+        val cada = Ajustes(app).intervaloMin * 60_000L
+        val r = object : Runnable {
+            override fun run() {
+                unaVuelta(app)
+                main.postDelayed(this, cada)
+            }
+        }
+        latido = r
+        main.postDelayed(r, cada)
+    }
+
+    /** Cuando vuelve el internet, envía de una vez lo que haya quedado en la cola. */
+    fun escucharRed(ctx: Context) {
+        if (redRegistrada) return
+        val app = ctx.applicationContext
+        try {
+            val cm = app.getSystemService(ConnectivityManager::class.java) ?: return
+            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    main.post {
+                        val ahora = System.currentTimeMillis()
+                        if (ahora - ultimoDisparoRed < 10_000L) return@post
+                        ultimoDisparoRed = ahora
+                        unaVuelta(app)
+                    }
+                }
+            })
+            redRegistrada = true
+        } catch (_: Exception) {
+        }
+    }
+
+    // ---------------------------------------------------------------- reservas que llegan del servidor
+
+    private val CLAVES_DE_ESTADO = setOf("estado", "fecha_validacion", "fecha_ingreso", "_actualizado")
+
+    /** Agrega/actualiza las reservas y aplica el estado (validada / ingresada) que informa el servidor. */
+    fun aplicarReservas(lista: JSONArray) {
+        // Columnas = todas las claves que trae el servidor (menos las de estado)
+        val encabezados = ArrayList<String>()
+        for (i in 0 until lista.length()) {
+            val o = lista.optJSONObject(i) ?: continue
+            o.keys().forEach { k -> if (k !in encabezados && k !in CLAVES_DE_ESTADO) encabezados.add(k) }
+        }
+        val filas = ArrayList<List<String>>()
+        if (encabezados.isNotEmpty()) {
+            for (i in 0 until lista.length()) {
+                val o = lista.optJSONObject(i) ?: continue
+                filas.add(encabezados.map { k -> if (o.isNull(k)) "" else o.optString(k, "") })
+            }
+        }
+        Operacion.enPrincipal {
+            if (filas.isNotEmpty()) Operacion.fusionarDelServidor(encabezados, filas)
+            Operacion.aplicarEstados(lista)
+        }
     }
 }
 
-/** Envía la bandeja en lotes de máximo 10 registros, con su foto en base64. */
+/** Envía la cola en lotes de 5, 10 o 20 registros (según Ajustes), con su foto en base64. */
 class EnvioWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
 
     override fun doWork(): Result {
@@ -177,8 +280,11 @@ class EnvioWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
         val url = aj.urlEnvio
         if (url.isBlank()) return Result.success()
 
-        repeat(30) { // hasta 300 registros por ejecución
-            val lote = Bandeja.primeros(ctx, Sincronizacion.MAX_PENDIENTES)
+        var tamano = aj.loteEnvio
+        var vueltas = 0
+        while (vueltas++ < 60) { // hasta 60 lotes por ejecución
+            if (isStopped) return Result.success()
+            val lote = Bandeja.primeros(ctx, tamano)
             if (lote.isEmpty()) {
                 Sincronizacion.ultimoError = null
                 Operacion.avisar()
@@ -211,28 +317,44 @@ class EnvioWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
             val respuesta = try {
                 Http.pedir("POST", url, aj.token, cuerpo.toString())
             } catch (e: Exception) {
+                // Sin internet o servidor caído: los registros siguen en la cola, con el mismo id, y se reintentan en el siguiente latido
                 Sincronizacion.ultimoError = "Sin conexión con el servidor"
                 Operacion.avisar()
-                return Result.retry()
+                return Result.success()
             }
             val (codigo, texto) = respuesta
             when {
                 codigo in 200..299 -> {
-                    // Si el servidor dice cuáles recibió, se quitan solo esos
-                    val recibidos = try {
-                        JSONObject(texto).optJSONArray("recibidos")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }
+                    var recibidos: Set<String>? = null
+                    var rechazados: Set<String> = emptySet()
+                    var reservas: JSONArray? = null
+                    try {
+                        val o = JSONObject(texto)
+                        o.optJSONArray("recibidos")?.let { a -> recibidos = (0 until a.length()).map { a.getString(it) }.toSet() }
+                        o.optJSONArray("rechazados")?.let { a -> rechazados = (0 until a.length()).map { a.getString(it) }.toSet() }
+                        reservas = o.optJSONArray("reservas")
                     } catch (_: Exception) {
-                        null
                     }
-                    Bandeja.quitar(ctx, recibidos?.takeIf { it.isNotEmpty() } ?: ids)
+                    // Si el servidor dice cuáles recibió se quitan solo esos; si no dice nada, todo el lote
+                    val quitar = (recibidos ?: ids).intersect(ids) + rechazados.intersect(ids)
+                    val quitados = Bandeja.quitar(ctx, quitar)
+                    quitados.filter { it.optString("tipo_evento") == "ALERTA" }.forEach {
+                        val f = it.optString("foto_archivo", "")
+                        if (f.isNotBlank()) File(ctx.filesDir, f).delete()
+                    }
+                    reservas?.let { r -> if (r.length() > 0) try { Sincronizacion.aplicarReservas(r) } catch (_: Exception) {} }
                     Sincronizacion.ultimoEnvio = System.currentTimeMillis()
-                    Sincronizacion.ultimoError = null
+                    Sincronizacion.ultimoError = if (rechazados.isNotEmpty()) "El servidor rechazó ${rechazados.size} registro(s)" else null
                     Operacion.avisar()
+                    if (quitados.isEmpty()) return Result.success() // el servidor no aceptó ninguno: no insistir en este mismo ciclo
                 }
                 codigo == 401 || codigo == 403 -> {
                     Sincronizacion.ultimoError = "El servidor rechazó la clave (token)"
                     Operacion.avisar()
                     return Result.failure()
+                }
+                codigo == 413 && tamano > 1 -> {
+                    tamano = maxOf(1, tamano / 2) // demasiado grande (muchas fotos): se manda en lotes más pequeños
                 }
                 codigo in 400..499 && codigo != 408 && codigo != 429 -> {
                     Sincronizacion.ultimoError = "El servidor respondió $codigo"
@@ -242,7 +364,7 @@ class EnvioWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
                 else -> {
                     Sincronizacion.ultimoError = "El servidor respondió $codigo, se reintentará"
                     Operacion.avisar()
-                    return Result.retry()
+                    return Result.success()
                 }
             }
         }
@@ -250,7 +372,7 @@ class EnvioWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
     }
 }
 
-/** Descarga reservas nuevas o cambiadas del servidor y las agrega al listado del equipo. */
+/** Descarga reservas nuevas o cambiadas del servidor (con su estado) y las agrega al listado del equipo. */
 class ReservasWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
 
     override fun doWork(): Result {
@@ -269,12 +391,12 @@ class ReservasWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, param
         } catch (e: Exception) {
             Sincronizacion.ultimoError = "No se pudieron descargar reservas"
             Operacion.avisar()
-            return Result.retry()
+            return Result.success() // se reintenta en el siguiente latido
         }
         if (codigo !in 200..299) {
             Sincronizacion.ultimoError = "Reservas: el servidor respondió $codigo"
             Operacion.avisar()
-            return if (codigo >= 500) Result.retry() else Result.failure()
+            return if (codigo >= 500) Result.success() else Result.failure()
         }
 
         return try {
@@ -288,20 +410,7 @@ class ReservasWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, param
                 lista = o.optJSONArray("reservas") ?: JSONArray()
                 hora = o.optString("hora", "")
             }
-            // Columnas = todas las claves que trae el servidor
-            val encabezados = ArrayList<String>()
-            for (i in 0 until lista.length()) {
-                val o = lista.optJSONObject(i) ?: continue
-                o.keys().forEach { k -> if (k !in encabezados) encabezados.add(k) }
-            }
-            val filas = ArrayList<List<String>>()
-            for (i in 0 until lista.length()) {
-                val o = lista.optJSONObject(i) ?: continue
-                filas.add(encabezados.map { k -> if (o.isNull(k)) "" else o.optString(k, "") })
-            }
-            if (filas.isNotEmpty()) {
-                Operacion.enPrincipal { Operacion.fusionarDelServidor(encabezados, filas) }
-            }
+            if (lista.length() > 0) Sincronizacion.aplicarReservas(lista)
             aj.ultimaSincReservas = hora.ifBlank { Operacion.iso(System.currentTimeMillis()) }
             Sincronizacion.ultimaDescarga = System.currentTimeMillis()
             Operacion.avisar()
