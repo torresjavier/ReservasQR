@@ -869,7 +869,7 @@ class MainActivity : AppCompatActivity() {
         chipVer.text = if (verPendientes) "Ver ingresados" else "Ver pendientes"
         chipVer.visibility = if (l == null) View.GONE else View.VISIBLE
         val filas = when {
-            l == null -> emptyList()
+            l == null -> emptyList<Int>()
             verPendientes -> l.pendientes()
             else -> l.ingresados()
         }
@@ -885,7 +885,7 @@ class MainActivity : AppCompatActivity() {
     private fun refrescarBusqueda() {
         val l = listado
         val q = edtPlaca.text?.toString().orEmpty()
-        val filas = if (l == null || q.isBlank()) emptyList() else l.buscarTexto(q, 100)
+        val filas = if (l == null || q.isBlank()) emptyList<Int>() else l.buscarTexto(q, 100)
         adBuscar.actualizar(filas)
         vacioBuscar.visibility = if (filas.isEmpty()) View.VISIBLE else View.GONE
         vacioBuscar.text = when {
