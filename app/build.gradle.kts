@@ -12,8 +12,8 @@ android {
         // Android 7.0 o superior (los equipos Sunmi V2 / P2 traen Android 7.1 u 11)
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {
@@ -43,4 +43,11 @@ dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // Impresora interna Sunmi (V2, P2, T2, D2…)
     implementation("com.sunmi:printerlibrary:1.0.18")
+    // Cámara para leer placas
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+    // OCR de Google (incluido en la app: funciona sin internet y sin Google Play)
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }

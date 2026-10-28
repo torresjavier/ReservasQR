@@ -79,6 +79,18 @@
             android:layout_height="wrap_content"
             android:text="Incluir el QR de la reserva en el ticket" />
 
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajLector"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Leer el QR con el lector integrado del Sunmi (si no, con la cámara)" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajConfirmarPlaca"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Confirmar antes de registrar una placa leída con la cámara" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajPrueba"
             style="@style/Widget.Material3.Button.OutlinedButton"

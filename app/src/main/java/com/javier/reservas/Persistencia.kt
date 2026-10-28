@@ -84,6 +84,16 @@ class Ajustes(ctx: Context) {
         get() = p.getBoolean("imprimirQr", true)
         set(v) { p.edit().putBoolean("imprimirQr", v).apply() }
 
+    /** Usar el lector integrado del Sunmi para el QR (si no, la cámara). */
+    var usarLectorSunmi: Boolean
+        get() = p.getBoolean("lectorSunmi", true)
+        set(v) { p.edit().putBoolean("lectorSunmi", v).apply() }
+
+    /** Pedir confirmación antes de registrar una placa leída con la cámara. */
+    var confirmarPlaca: Boolean
+        get() = p.getBoolean("confirmarPlaca", true)
+        set(v) { p.edit().putBoolean("confirmarPlaca", v).apply() }
+
     /** Reemplaza {nombre} y {evento} en el mensaje. */
     fun textoBienvenida(nombre: String, evento: String): String =
         bienvenida.replace("{nombre}", nombre.ifBlank { "" })

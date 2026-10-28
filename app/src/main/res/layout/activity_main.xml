@@ -113,6 +113,31 @@
                 android:textSize="15sp" />
         </LinearLayout>
 
+        <LinearLayout
+            android:id="@+id/zonaLector"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="?attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:contentDescription="Lector"
+                android:src="@drawable/ic_qr"
+                app:tint="@color/texto_suave" />
+
+            <TextView
+                android:id="@+id/txtLector"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:textColor="@color/texto_suave"
+                android:textSize="15sp" />
+        </LinearLayout>
+
         <!-- Pestañas -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -209,11 +234,54 @@
                 app:iconSize="26dp"
                 app:iconTint="@color/negro" />
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnQrCamara"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="54dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="QR con cámara"
+                    android:textColor="@color/blanco"
+                    android:textSize="14sp"
+                    app:cornerRadius="14dp"
+                    app:icon="@drawable/ic_camara"
+                    app:iconSize="18dp"
+                    app:iconTint="@color/blanco"
+                    app:strokeColor="@color/tarjeta_borde" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLeerPlaca"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="54dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Leer placa"
+                    android:textColor="@color/amarillo_placa"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="14dp"
+                    app:icon="@drawable/ic_carro"
+                    app:iconSize="18dp"
+                    app:iconTint="@color/amarillo_placa"
+                    app:strokeColor="@color/amarillo_placa" />
+            </LinearLayout>
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="Apunta la cámara al QR de la reserva del cliente. Si no lo trae, usa Buscar placa."
+                android:layout_marginTop="8dp"
+                android:text="«Escanear el QR» enciende el lector del Sunmi (también sirven sus botones laterales). «Leer placa» reconoce la placa con la cámara."
                 android:textColor="@color/texto_suave"
                 android:textSize="13sp" />
         </LinearLayout>

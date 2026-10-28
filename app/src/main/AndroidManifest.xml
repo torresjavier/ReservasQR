@@ -17,6 +17,7 @@
     <!-- Servicio de la impresora interna Sunmi -->
     <queries>
         <package android:name="woyou.aidlservice.jiuiv5" />
+        <package android:name="com.sunmi.scanner" />
         <intent>
             <action android:name="woyou.aidlservice.jiuiv5.IWoyouService" />
         </intent>
@@ -65,6 +66,12 @@
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
+
+        <!-- Cámara para leer placas con OCR -->
+        <activity
+            android:name=".PlacaActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <!-- Cámara del lector QR: permite girar el equipo -->
         <activity

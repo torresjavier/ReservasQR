@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/raizPlaca"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/negro">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/vistaCamara"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Marco guía para la placa -->
+    <View
+        android:layout_width="300dp"
+        android:layout_height="110dp"
+        android:layout_gravity="center"
+        android:background="@drawable/marco_placa" />
+
+    <LinearLayout
+        android:id="@+id/panelArriba"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="#99000000"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Leer placa"
+            android:textColor="@color/blanco"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Ponga la placa dentro del recuadro amarillo y mantenga el equipo quieto."
+            android:textColor="@color/texto_suave"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/panelAbajo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#CC000000"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/txtLeida"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/placa"
+            android:fontFamily="monospace"
+            android:minWidth="180dp"
+            android:gravity="center"
+            android:paddingStart="18dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="6dp"
+            android:text="------"
+            android:textColor="@color/negro"
+            android:textSize="34sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/txtEstadoOcr"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center"
+            android:text="Buscando placa…"
+            android:textColor="@color/blanco"
+            android:textSize="15sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnLinterna"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:text="Linterna"
+                android:textColor="@color/blanco"
+                app:strokeColor="@color/tarjeta_borde" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnUsarPlaca"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1.4"
+                android:text="Usar esta placa"
+                android:textColor="@color/negro"
+                android:textStyle="bold"
+                app:backgroundTint="@color/blanco" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCancelarPlaca"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:text="Cancelar"
+                android:textColor="@color/texto_suave" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

@@ -4,8 +4,10 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -25,6 +27,7 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -38,6 +41,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.core.view.ViewCompat
@@ -80,6 +84,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtSubtitulo: TextView
     private lateinit var txtPill: TextView
     private lateinit var txtImpresora: TextView
+    private lateinit var txtLector: TextView
     private lateinit var tabIngresos: TextView
     private lateinit var tabBuscar: TextView
     private lateinit var panelIngresos: View
@@ -96,6 +101,14 @@ class MainActivity : AppCompatActivity() {
 
     private var tab = 0
     private var verPendientes = false
+    private var dialogoActual: AlertDialog? = null
+    private val bufferTeclas = StringBuilder()
+    private var ultimaTecla = 0L
+    private var ultimaLectura = ""
+    private var ultimaLecturaT = 0L
+
+    /** De dónde viene el registro, para saber qué ofrecer después. */
+    private enum class Origen { QR, BUSQUEDA, PLACA }
     private val handler = Handler(Looper.getMainLooper())
     private val co = Locale("es", "CO")
     private val fmtHora = SimpleDateFormat("hh:mm a", co)
@@ -116,6 +129,24 @@ class MainActivity : AppCompatActivity() {
     private val pedirCamara = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) lanzarEscaner()
         else mostrarError("Sin permiso de cámara", "Para leer el QR active el permiso de cámara en Ajustes → Aplicaciones → Reservas QR → Permisos.")
+    }
+
+    private val leerPlaca = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val placa = r.data?.getStringExtra(PlacaActivity.EXTRA_PLACA)
+        if (r.resultCode == RESULT_OK && !placa.isNullOrBlank()) procesarPlaca(placa)
+    }
+
+    private val pedirCamaraPlaca = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) abrirCamaraPlaca()
+        else mostrarError("Sin permiso de cámara", "Para leer la placa active el permiso de cámara en Ajustes → Aplicaciones → Reservas QR → Permisos.")
+    }
+
+    /** Lecturas del lector Sunmi cuando está en modo «broadcast». */
+    private val receptorEscaner = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val datos = intent?.getStringExtra(EscanerSunmi.EXTRA_DATOS) ?: return
+            recibirLectura(datos)
+        }
     }
 
     private val pedirBt = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
@@ -156,6 +187,7 @@ class MainActivity : AppCompatActivity() {
         txtSubtitulo = findViewById(R.id.txtSubtitulo)
         txtPill = findViewById(R.id.txtPill)
         txtImpresora = findViewById(R.id.txtImpresora)
+        txtLector = findViewById(R.id.txtLector)
         tabIngresos = findViewById(R.id.tabIngresos)
         tabBuscar = findViewById(R.id.tabBuscar)
         panelIngresos = findViewById(R.id.panelIngresos)
@@ -188,6 +220,9 @@ class MainActivity : AppCompatActivity() {
         tabIngresos.setOnClickListener { irATab(0) }
         tabBuscar.setOnClickListener { irATab(1) }
         findViewById<Button>(R.id.btnEscanear).setOnClickListener { iniciarEscaneo() }
+        findViewById<Button>(R.id.btnQrCamara).setOnClickListener { iniciarEscaneo(conCamara = true) }
+        findViewById<Button>(R.id.btnLeerPlaca).setOnClickListener { leerPlacaCamara() }
+        findViewById<View>(R.id.zonaLector).setOnClickListener { iniciarEscaneo() }
         findViewById<Button>(R.id.btnCargar).setOnClickListener { confirmarSiHayAvance { pedirArchivo(null) } }
         findViewById<Button>(R.id.btnBluetooth).setOnClickListener { mostrarBluetooth() }
         findViewById<Button>(R.id.btnColumnas).setOnClickListener { mostrarColumnas(false) }
@@ -207,6 +242,8 @@ class MainActivity : AppCompatActivity() {
 
         Impresora.alCambiar = { refrescarImpresora() }
         Impresora.conectar(this)
+        EscanerSunmi.alCambiar = { runOnUiThread { refrescarImpresora() } }
+        EscanerSunmi.conectar(this)
 
         irATab(0)
         refrescar()
@@ -224,7 +261,68 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         Impresora.conectar(this)
+        EscanerSunmi.conectar(this)
+        try {
+            ContextCompat.registerReceiver(
+                this, receptorEscaner, IntentFilter(EscanerSunmi.ACCION_DATOS), ContextCompat.RECEIVER_EXPORTED
+            )
+        } catch (_: Exception) {
+        }
         refrescarImpresora()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        try {
+            unregisterReceiver(receptorEscaner)
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * Lector Sunmi en modo «teclado»: escribe el código como si fueran teclas y termina con Enter.
+     * Cuando no hay un campo de texto activo, se juntan esas teclas y se procesan como un QR.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (currentFocus is EditText) return super.dispatchKeyEvent(event)
+        val ahora = System.currentTimeMillis()
+        if (event.keyCode == KeyEvent.KEYCODE_ENTER || event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            if (event.action == KeyEvent.ACTION_UP && bufferTeclas.length >= 3) {
+                val t = bufferTeclas.toString()
+                bufferTeclas.setLength(0)
+                recibirLectura(t)
+                return true
+            }
+            if (bufferTeclas.isNotEmpty()) return true
+            return super.dispatchKeyEvent(event)
+        }
+        val ch = event.unicodeChar
+        if (ch > 0 && !Character.isISOControl(ch)) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                if (ahora - ultimaTecla > 400) bufferTeclas.setLength(0)
+                bufferTeclas.appendCodePoint(ch)
+                ultimaTecla = ahora
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /** Código leído por el lector Sunmi (broadcast o teclado). */
+    private fun recibirLectura(datos: String) {
+        val t = datos.trim()
+        if (t.isEmpty()) return
+        val ahora = System.currentTimeMillis()
+        if (t == ultimaLectura && ahora - ultimaLecturaT < 1500) return // llega duplicado por broadcast y teclado
+        ultimaLectura = t
+        ultimaLecturaT = ahora
+        // Si el lector también "escribió" el código en el buscador, se borra de ahí
+        val enBuscador = edtPlaca.text?.toString().orEmpty()
+        if (enBuscador.contains(t)) edtPlaca.setText(enBuscador.replace(t, "").trim())
+        if (listado == null) {
+            toast("Primero cargue el listado de reservas."); return
+        }
+        procesarQr(t)
     }
 
     // ---------------------------------------------------------------- recibir archivo de otra app
@@ -464,7 +562,7 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------------------------------------------------------- escanear
 
-    private fun iniciarEscaneo() {
+    private fun iniciarEscaneo(conCamara: Boolean = false) {
         if (listado == null) {
             MaterialAlertDialogBuilder(this)
                 .setTitle("Falta el listado")
@@ -475,8 +573,82 @@ class MainActivity : AppCompatActivity() {
                 .show()
             return
         }
+        if (!conCamara && ajustes.usarLectorSunmi && EscanerSunmi.disponible) {
+            dialogoActual?.dismiss()
+            if (EscanerSunmi.escanear()) {
+                toast("Lector encendido: apunte la parte de arriba del equipo al QR")
+                return
+            }
+        }
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) lanzarEscaner()
         else pedirCamara.launch(Manifest.permission.CAMERA)
+    }
+
+    // ---------------------------------------------------------------- leer placa con la cámara (OCR)
+
+    private fun leerPlacaCamara() {
+        if (listado == null) {
+            iniciarEscaneo(); return // muestra el aviso de que falta el listado
+        }
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) abrirCamaraPlaca()
+        else pedirCamaraPlaca.launch(Manifest.permission.CAMERA)
+    }
+
+    private fun abrirCamaraPlaca() {
+        dialogoActual?.dismiss()
+        Compartido.listado = listado
+        leerPlaca.launch(Intent(this, PlacaActivity::class.java))
+    }
+
+    private fun procesarPlaca(leida: String) {
+        val l = listado ?: return
+        val filas = l.buscarPlacaOcr(leida)
+        when {
+            filas.isEmpty() -> {
+                vibrar(400)
+                MaterialAlertDialogBuilder(this)
+                    .setTitle("La placa $leida no está en el listado")
+                    .setMessage("Puede que la cámara haya confundido alguna letra o número. Revise la placa del vehículo y corríjala a mano si hace falta.")
+                    .setPositiveButton("Corregir a mano") { _, _ ->
+                        irATab(1)
+                        edtPlaca.setText(leida)
+                        edtPlaca.setSelection(edtPlaca.text?.length ?: 0)
+                    }
+                    .setNeutralButton("Leer otra vez") { _, _ -> leerPlacaCamara() }
+                    .setNegativeButton("Cancelar", null)
+                    .show()
+            }
+            filas.size == 1 -> placaEncontrada(filas[0], leida)
+            else -> {
+                val opciones = filas.map { f ->
+                    "${l.valor(f, Listado.Campo.PLACA).uppercase()} · ${l.valor(f, Listado.Campo.NOMBRE).ifBlank { l.titulo(f) }}" +
+                        if (l.ingresado(f)) "  (ya ingresó)" else ""
+                }.toTypedArray()
+                MaterialAlertDialogBuilder(this)
+                    .setTitle("Se leyó $leida. ¿Cuál es?")
+                    .setItems(opciones) { _, w -> placaEncontrada(filas[w], leida) }
+                    .setNegativeButton("Cancelar", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun placaEncontrada(fila: Int, leida: String) {
+        val l = listado ?: return
+        if (l.ingresado(fila)) {
+            mostrarYaIngresado(fila, Origen.PLACA); return
+        }
+        if (!ajustes.confirmarPlaca) {
+            registrar(fila, Origen.PLACA); return
+        }
+        val placa = l.placaNormal(fila)
+        mostrarTarjeta(
+            Estilo.INFO,
+            if (placa == Listado.normPlaca(leida)) "PLACA LEÍDA · CONFIRME" else "PLACA LEÍDA: $leida · CONFIRME",
+            fila, null,
+            secundario = accion("Leer otra") { d, _ -> d.dismiss(); leerPlacaCamara() },
+            principal = accion("Registrar ingreso") { d, _ -> d.dismiss(); registrar(fila, Origen.PLACA) }
+        )
     }
 
     private fun lanzarEscaner() {
@@ -504,16 +676,16 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val libre = candidatas.firstOrNull { !l.ingresado(it) }
-        if (libre != null) registrar(libre, desdeBusqueda = false)
-        else mostrarYaIngresado(candidatas.first(), desdeBusqueda = false)
+        if (libre != null) registrar(libre, Origen.QR)
+        else mostrarYaIngresado(candidatas.first(), Origen.QR)
     }
 
     // ---------------------------------------------------------------- registrar / mostrar
 
-    private fun registrar(fila: Int, desdeBusqueda: Boolean) {
+    private fun registrar(fila: Int, origen: Origen) {
         val l = listado ?: return
         if (l.ingresado(fila)) {
-            mostrarYaIngresado(fila, desdeBusqueda); return
+            mostrarYaIngresado(fila, origen); return
         }
         l.ingresos[fila] = System.currentTimeMillis()
         guardar()
@@ -523,29 +695,31 @@ class MainActivity : AppCompatActivity() {
         mostrarTarjeta(
             Estilo.OK, "✓ RESERVA INGRESADA", fila, null,
             secundario = accion((if (auto) "Reimprimir" else "Imprimir ticket")) { _, est -> imprimir(fila, auto, est) },
-            principal = siguiente(desdeBusqueda),
+            principal = siguiente(origen),
             imprimirAhora = auto
         )
     }
 
-    private fun mostrarYaIngresado(fila: Int, desdeBusqueda: Boolean) {
+    private fun mostrarYaIngresado(fila: Int, origen: Origen) {
         vibrar(250)
         mostrarTarjeta(
             Estilo.AVISO, "YA INGRESÓ", fila, null,
             secundario = accion("Reimprimir") { _, est -> imprimir(fila, true, est) },
-            principal = siguiente(desdeBusqueda)
+            principal = siguiente(origen)
         )
     }
 
     private fun accion(texto: String, f: (AlertDialog, TextView) -> Unit): Pair<String, (AlertDialog, TextView) -> Unit> = texto to f
 
-    private fun siguiente(desdeBusqueda: Boolean): Pair<String, (AlertDialog, TextView) -> Unit> =
-        if (desdeBusqueda) accion("Listo") { d, _ -> d.dismiss(); edtPlaca.selectAll() }
-        else accion("Escanear otro") { d, _ -> d.dismiss(); iniciarEscaneo() }
+    private fun siguiente(origen: Origen): Pair<String, (AlertDialog, TextView) -> Unit> = when (origen) {
+        Origen.BUSQUEDA -> accion("Listo") { d, _ -> d.dismiss(); edtPlaca.selectAll() }
+        Origen.PLACA -> accion("Leer otra placa") { d, _ -> d.dismiss(); leerPlacaCamara() }
+        Origen.QR -> accion("Escanear otro") { d, _ -> d.dismiss(); iniciarEscaneo() }
+    }
 
     private fun mostrarDetalle(fila: Int) {
         val l = listado ?: return
-        val desdeBusqueda = tab == 1
+        val origen = if (tab == 1) Origen.BUSQUEDA else Origen.QR
         if (l.ingresado(fila)) {
             mostrarTarjeta(
                 Estilo.INFO, "INGRESADO · ${fmtHora.format(Date(l.ingresos[fila] ?: 0L))}", fila, null,
@@ -556,7 +730,7 @@ class MainActivity : AppCompatActivity() {
             mostrarTarjeta(
                 Estilo.INFO, "RESERVA PENDIENTE", fila, null,
                 secundario = accion("Cerrar") { d, _ -> d.dismiss() },
-                principal = accion("Registrar ingreso") { d, _ -> d.dismiss(); ocultarTeclado(); registrar(fila, desdeBusqueda) }
+                principal = accion("Registrar ingreso") { d, _ -> d.dismiss(); ocultarTeclado(); registrar(fila, origen) }
             )
         }
     }
@@ -635,6 +809,8 @@ class MainActivity : AppCompatActivity() {
         val d = MaterialAlertDialogBuilder(this).setView(v).create()
         bSec.setOnClickListener { secundario.second(d, tImpresion) }
         bPri.setOnClickListener { principal.second(d, tImpresion) }
+        dialogoActual?.dismiss()
+        dialogoActual = d
         d.show()
 
         if (imprimirAhora && fila != null) imprimir(fila, false, tImpresion)
@@ -778,12 +954,16 @@ class MainActivity : AppCompatActivity() {
         val vip = v.findViewById<EditText>(R.id.ajVip)
         val auto = v.findViewById<MaterialSwitch>(R.id.ajAuto)
         val qr = v.findViewById<MaterialSwitch>(R.id.ajQr)
+        val lector = v.findViewById<MaterialSwitch>(R.id.ajLector)
+        val confirmar = v.findViewById<MaterialSwitch>(R.id.ajConfirmarPlaca)
         op.setText(ajustes.operador.takeIf { it != "Operador" }.orEmpty())
         neg.setText(ajustes.negocio)
         bien.setText(ajustes.bienvenida)
         vip.setText(ajustes.mensajeVip)
         auto.isChecked = ajustes.autoImprimir
         qr.isChecked = ajustes.imprimirQr
+        lector.isChecked = ajustes.usarLectorSunmi
+        confirmar.isChecked = ajustes.confirmarPlaca
 
         fun guardarCampos() {
             ajustes.operador = op.text.toString()
@@ -792,6 +972,8 @@ class MainActivity : AppCompatActivity() {
             ajustes.mensajeVip = vip.text.toString()
             ajustes.autoImprimir = auto.isChecked
             ajustes.imprimirQr = qr.isChecked
+            ajustes.usarLectorSunmi = lector.isChecked
+            ajustes.confirmarPlaca = confirmar.isChecked
             refrescar()
         }
         v.findViewById<Button>(R.id.ajPrueba).setOnClickListener { guardarCampos(); imprimirPrueba() }
@@ -858,6 +1040,14 @@ class MainActivity : AppCompatActivity() {
             txtImpresora.text = s
         } else {
             txtImpresora.text = "Sin impresora Sunmi · usará la impresión de Android"
+        }
+        if (EscanerSunmi.disponible && ajustes.usarLectorSunmi) {
+            val s = SpannableString("Lee QR con el lector Sunmi · listo")
+            s.setSpan(StyleSpan(Typeface.BOLD), 21, 26, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            s.setSpan(ForegroundColorSpan(getColor(R.color.texto)), 21, 26, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            txtLector.text = s
+        } else {
+            txtLector.text = "Lee QR con la cámara"
         }
     }
 

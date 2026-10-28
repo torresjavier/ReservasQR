@@ -261,6 +261,29 @@ public final class Listado {
         return out.size() > max ? new ArrayList<>(out.subList(0, max)) : out;
     }
 
+    /**
+     * Busca una placa leída por la cámara (OCR). Primero la coincidencia exacta; si no hay,
+     * acepta las confusiones típicas (O/Q/0, I/1, B/8...). Devuelve las filas encontradas.
+     */
+    public List<Integer> buscarPlacaOcr(String leida) {
+        String p = normPlaca(leida);
+        if (p.length() < 4) return Collections.emptyList();
+        List<Integer> exactas = idxPlaca.get(p);
+        if (exactas != null) return exactas;
+        List<Integer> out = new ArrayList<>();
+        int cp = columna(Campo.PLACA);
+        if (cp < 0) return out;
+        for (int i = 0; i < filas.size(); i++) {
+            if (OcrPlaca.coinciden(p, normPlaca(filas.get(i).get(cp)))) out.add(i);
+        }
+        return out;
+    }
+
+    /** Placa del listado, normalizada (sin espacios ni guiones). */
+    public String placaNormal(int fila) {
+        return normPlaca(valor(fila, Campo.PLACA));
+    }
+
     private boolean filaContiene(int fila, String qn) {
         for (String v : filas.get(fila)) if (normalizar(v).contains(qn)) return true;
         return false;
