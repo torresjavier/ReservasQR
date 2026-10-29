@@ -100,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chipImpresora: TextView
     private lateinit var chipLector: TextView
     private lateinit var chipEnvio: TextView
+    private lateinit var chipRed: TextView
     private lateinit var txtContador: TextView
     private lateinit var txtTotal: TextView
     private lateinit var txtFaltan: TextView
@@ -143,6 +144,7 @@ class MainActivity : AppCompatActivity() {
     private val fmtHora = SimpleDateFormat("hh:mm a", co)
     private val fmtFecha = SimpleDateFormat("dd/MM/yyyy hh:mm a", co)
     private val alCambiarDatos: () -> Unit = { refrescar() }
+    private val alCambiarRed: () -> Unit = { refrescarEstado() }
 
     // ---------------------------------------------------------------- lanzadores
 
@@ -173,6 +175,9 @@ class MainActivity : AppCompatActivity() {
             enfocarBuscador()
         }
     }
+
+    /** Android 13+: sin este permiso el servicio de la red funciona igual, pero no se ve su aviso fijo. */
+    private val pedirNotificaciones = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     private val pedirBt = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
         if (res.values.all { it }) hacerVisibleAhora()
@@ -254,6 +259,7 @@ class MainActivity : AppCompatActivity() {
         chipImpresora = findViewById(R.id.chipImpresora)
         chipLector = findViewById(R.id.chipLector)
         chipEnvio = findViewById(R.id.chipEnvio)
+        chipRed = findViewById(R.id.chipRed)
         txtContador = findViewById(R.id.txtContador)
         txtTotal = findViewById(R.id.txtTotal)
         txtFaltan = findViewById(R.id.txtFaltan)
@@ -297,6 +303,7 @@ class MainActivity : AppCompatActivity() {
         chipImpresora.setOnClickListener { enviarAImpresora(Operacion.lineasPrueba(), null) }
         chipLector.setOnClickListener { iniciarEscaneo() }
         chipEnvio.setOnClickListener { enviarAhora() }
+        chipRed.setOnClickListener { mostrarEquiposCercanos() }
         segPendientes.setOnClickListener { verLista = Vista.PENDIENTES; refrescarLista() }
         segValidados.setOnClickListener { verLista = Vista.VALIDADOS; refrescarLista() }
         segIngresados.setOnClickListener { verLista = Vista.INGRESADOS; refrescarLista() }
@@ -329,6 +336,7 @@ class MainActivity : AppCompatActivity() {
         EscanerSunmi.conectar(this)
         Sincronizacion.programar(this)
         Operacion.escuchar(alCambiarDatos)
+        RedLocal.escuchar(alCambiarRed)
 
         cargarFotoPerfil()
         refrescar()
@@ -338,6 +346,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Operacion.dejarDeEscuchar(alCambiarDatos)
+        RedLocal.dejarDeEscuchar(alCambiarRed)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -357,6 +366,23 @@ class MainActivity : AppCompatActivity() {
         }
         comprobarBloqueo()
         refrescar()
+        iniciarRedEntreEquipos()
+    }
+
+    /** Enciende la comunicación con los equipos cercanos (si está activada en Ajustes) y deja el servicio en segundo plano. */
+    private fun iniciarRedEntreEquipos() {
+        if (!ajustes.redActiva) return
+        RedLocal.arrancar()
+        RedLocal.iniciarServicio(this)
+        if (Build.VERSION.SDK_INT >= 33 && !ajustes.pidioNotificaciones &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ajustes.pidioNotificaciones = true
+            try {
+                pedirNotificaciones.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     override fun onPause() {
@@ -632,16 +658,20 @@ class MainActivity : AppCompatActivity() {
                 if (origen == Operacion.Origen.BUSQUEDA) edtPlaca.setText("")
             }
             is Operacion.Resultado.YaValidado -> {
+                val por = resultado.porEquipo?.let { " en $it" }.orEmpty()
                 if (resultado.sospechoso) {
                     vibrar(500)
                     tonoError()
                     mostrarBanner(
                         Estilo.ERROR, "⚠ YA SE VALIDÓ", fila, null,
-                        "Pasó a las ${fmtHora.format(Date(resultado.hora))}. Verifique: puede ser un QR o una placa repetida."
+                        "Pasó a las ${fmtHora.format(Date(resultado.hora))}$por. Verifique: puede ser un QR o una placa repetida."
                     )
                 } else {
                     vibrar(200)
-                    mostrarBanner(Estilo.AVISO, "YA VALIDADA · ${fmtHora.format(Date(resultado.hora))}", fila, null, null)
+                    mostrarBanner(
+                        Estilo.AVISO, "YA VALIDADA · ${fmtHora.format(Date(resultado.hora))}", fila, null,
+                        resultado.porEquipo?.let { "Validada en $it" }
+                    )
                 }
             }
             is Operacion.Resultado.Ingresado -> {
@@ -666,7 +696,8 @@ class MainActivity : AppCompatActivity() {
                 mostrarTarjeta(
                     Estilo.AVISO, "YA INGRESÓ · ${fmtHora.format(Date(resultado.hora))}", fila, null,
                     secundario = accion("Reimprimir") { _, est -> imprimir(fila, true, est) },
-                    principal = siguiente(origen)
+                    principal = siguiente(origen),
+                    nota = resultado.porEquipo?.let { "Lo registró $it." }
                 )
             }
             is Operacion.Resultado.SinValidacion -> {
@@ -811,11 +842,13 @@ class MainActivity : AppCompatActivity() {
             l.ingresos[fila]?.let { det += "Ingreso: ${fmtFecha.format(Date(it))}" }
             Operacion.infoVal[fila]?.let { i ->
                 if (i.placaLeida.isNotBlank()) det += "Placa leída en la vía: ${i.placaLeida}"
+                Operacion.equipoDe(i)?.let { det += "Validado por el equipo: $it" }
             }
             Operacion.info[fila]?.let { i ->
-                val como = when (i.origen) {
-                    Operacion.Origen.PLACA.api -> "cámara (placa leída: ${i.placaLeida})"
-                    Operacion.Origen.QR.api -> "QR"
+                val como = when {
+                    Operacion.equipoDe(i) != null -> "el equipo ${Operacion.equipoDe(i)}"
+                    i.origen == Operacion.Origen.PLACA.api -> "cámara (placa leída: ${i.placaLeida})"
+                    i.origen == Operacion.Origen.QR.api -> "QR"
                     else -> "búsqueda manual"
                 }
                 det += "Registrado por: $como"
@@ -1339,6 +1372,10 @@ class MainActivity : AppCompatActivity() {
         val exigir = v.findViewById<MaterialSwitch>(R.id.ajExigirValidacion)
         val envAlertas = v.findViewById<MaterialSwitch>(R.id.ajEnviarAlertas)
         val minEspera = v.findViewById<EditText>(R.id.ajMinutosEspera)
+        val redActiva = v.findViewById<MaterialSwitch>(R.id.ajRedActiva)
+        val nombreEquipo = v.findViewById<EditText>(R.id.ajNombreEquipo)
+        val redClave = v.findViewById<EditText>(R.id.ajRedClave)
+        val redIps = v.findViewById<EditText>(R.id.ajRedIps)
 
         lote.adapter = adaptadorSpinner(Sincronizacion.LOTES.map { "$it registros" })
         lote.setSelection(Sincronizacion.LOTES.indexOf(ajustes.loteEnvio).coerceAtLeast(0))
@@ -1363,6 +1400,12 @@ class MainActivity : AppCompatActivity() {
         exigir.isChecked = ajustes.exigirValidacion
         envAlertas.isChecked = ajustes.enviarAlertas
         minEspera.setText(ajustes.minutosEspera.toString())
+        redActiva.isChecked = ajustes.redActiva
+        nombreEquipo.setText(ajustes.nombreEquipo)
+        redClave.setText(ajustes.redClave)
+        redIps.setText(ajustes.redIps)
+        v.findViewById<View>(R.id.ajVerEquipos).setOnClickListener { mostrarEquiposCercanos() }
+        v.findViewById<View>(R.id.ajRedBateria).setOnClickListener { permitirSegundoPlano() }
 
         v.findViewById<View>(R.id.ajPerfilVia).setOnClickListener {
             soloQr.isChecked = true
@@ -1405,6 +1448,11 @@ class MainActivity : AppCompatActivity() {
             ajustes.exigirValidacion = exigir.isChecked
             ajustes.enviarAlertas = envAlertas.isChecked
             ajustes.minutosEspera = minEspera.text.toString().toIntOrNull() ?: 30
+            ajustes.redActiva = redActiva.isChecked
+            ajustes.nombreEquipo = nombreEquipo.text.toString()
+            ajustes.redClave = redClave.text.toString()
+            ajustes.redIps = redIps.text.toString()
+            RedLocal.aplicarAjustes(this)
             Sincronizacion.programar(this)
             refrescar()
         }
@@ -1420,6 +1468,58 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancelar", null)
             .show()
+    }
+
+    // ---------------------------------------------------------------- equipos cercanos
+
+    /** Lista los equipos que se encuentran por el Wi-Fi y si están conectados con este. */
+    private fun mostrarEquiposCercanos() {
+        val a = ajustes
+        val t = StringBuilder()
+        t.append("Este equipo: ").append(a.nombreEquipo).append('\n')
+        val ips = RedLocal.misDirecciones()
+        t.append("Dirección en la red: ").append(if (ips.isEmpty()) "sin Wi-Fi" else ips.joinToString(", ")).append("\n\n")
+        if (!a.redActiva) {
+            t.append("La red entre equipos está apagada. Se activa en Ajustes → Red entre equipos.")
+        } else if (!RedLocal.activa()) {
+            t.append(RedLocal.error ?: "La red entre equipos se está iniciando…")
+        } else {
+            val eq = RedLocal.equipos()
+            if (eq.isEmpty()) {
+                t.append("No se ha encontrado ningún equipo.\n\nVerifique que los demás estén encendidos, con la app abierta una vez, en el mismo Wi-Fi y con la misma clave de red. Si tienen datos móviles (4G), pruebe apagarlos.")
+            } else {
+                for (e in eq) {
+                    val estado = if (e.conectado) "● conectado" else "○ visto, conectando…"
+                    t.append(e.nombre.ifBlank { "(sin nombre)" }).append("  ·  ").append(e.ip).append("\n   ").append(estado)
+                    if (e.eventosRecibidos > 0) t.append("  ·  ").append(e.eventosRecibidos).append(" avisos")
+                    t.append("\n")
+                }
+            }
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Equipos cercanos")
+            .setMessage(t.toString().trimEnd())
+            .setPositiveButton("Cerrar", null)
+            .setNeutralButton("Sincronizar ahora") { _, _ ->
+                RedLocal.sincronizarAhora()
+                toast("Comparando lo que sabe cada equipo…")
+            }
+            .show()
+    }
+
+    /** Abre la pantalla de Android donde se quita el ahorro de batería a esta app, para que no se duerma en segundo plano. */
+    private fun permitirSegundoPlano() {
+        try {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            toast("Busque «Reservas QR» y elija «No optimizar» o «Sin restricciones».")
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                toast("Entre a Batería y elija «Sin restricciones».")
+            } catch (_: Exception) {
+                toast("No se pudo abrir la pantalla de batería.")
+            }
+        }
     }
 
     // ---------------------------------------------------------------- PIN de configuración
@@ -1653,6 +1753,7 @@ class MainActivity : AppCompatActivity() {
         chipImpresora.text = punto(if (Impresora.esSunmi) "Impresora Sunmi" else "Sin impresora Sunmi", Impresora.esSunmi)
         val lector = EscanerSunmi.disponible && ajustes.usarLectorSunmi
         chipLector.text = punto(if (lector) "Lector Sunmi" else "QR por cámara", lector)
+        chipRed.text = punto(RedLocal.resumen(), ajustes.redActiva && RedLocal.activa() && RedLocal.conectados() > 0)
         chipEnvio.text = if (!Sincronizacion.configuradoEnvio(this)) {
             punto("Sin servidor", false)
         } else {

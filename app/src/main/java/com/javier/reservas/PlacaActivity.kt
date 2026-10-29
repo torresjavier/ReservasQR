@@ -1313,15 +1313,16 @@ class PlacaActivity : AppCompatActivity() {
             }
             is Operacion.Resultado.YaValidado -> {
                 vibrar(longArrayOf(0, 80, 90, 80))
+                val por = resultado.porEquipo?.let { " en $it" }.orEmpty()
                 if (resultado.sospechoso) {
                     vibrar(longArrayOf(0, 300, 120, 300))
                     mostrarAviso(
                         Tipo.ALERTA, "⚠ YA SE VALIDÓ", placa,
-                        "$nombre\nYa pasó a las ${hora.format(Date(resultado.hora))}. Verifique: puede ser un QR o placa repetida.",
+                        "$nombre\nYa pasó a las ${hora.format(Date(resultado.hora))}$por. Verifique: puede ser un QR o placa repetida.",
                         via
                     )
                 } else {
-                    mostrarAviso(Tipo.REPETIDO, "YA VALIDADA", placa, "$nombre\nValidada a las ${hora.format(Date(resultado.hora))}", via)
+                    mostrarAviso(Tipo.REPETIDO, "YA VALIDADA", placa, "$nombre\nValidada a las ${hora.format(Date(resultado.hora))}$por", via)
                 }
                 mostrarEstado("$placa ya había sido validada", true)
             }
@@ -1352,7 +1353,8 @@ class PlacaActivity : AppCompatActivity() {
             }
             is Operacion.Resultado.YaIngreso -> {
                 vibrar(longArrayOf(0, 80, 90, 80))
-                mostrarAviso(Tipo.REPETIDO, "YA INGRESÓ", placa, "$nombre\nIngresó a las ${hora.format(Date(resultado.hora))}", false)
+                val por = resultado.porEquipo?.let { " en $it" }.orEmpty()
+                mostrarAviso(Tipo.REPETIDO, "YA INGRESÓ", placa, "$nombre\nIngresó a las ${hora.format(Date(resultado.hora))}$por", false)
                 mostrarEstado("$placa ya había ingresado", true)
             }
             is Operacion.Resultado.SinValidacion -> {

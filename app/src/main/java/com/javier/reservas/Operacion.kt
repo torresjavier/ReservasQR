@@ -39,9 +39,10 @@ object Operacion {
     sealed class Resultado {
         abstract val fila: Int
         data class Validado(override val fila: Int, val aviso: String?) : Resultado()
-        data class YaValidado(override val fila: Int, val hora: Long, val sospechoso: Boolean) : Resultado()
+        /** [porEquipo]: nombre del otro equipo que la validó, si no fue este (red entre equipos). */
+        data class YaValidado(override val fila: Int, val hora: Long, val sospechoso: Boolean, val porEquipo: String? = null) : Resultado()
         data class Ingresado(override val fila: Int, val sinValidar: Boolean, val aviso: String?) : Resultado()
-        data class YaIngreso(override val fila: Int, val hora: Long) : Resultado()
+        data class YaIngreso(override val fila: Int, val hora: Long, val porEquipo: String? = null) : Resultado()
         /** Adentro se exige haber pasado por la vía y esta reserva no pasó. */
         data class SinValidacion(override val fila: Int) : Resultado()
     }
@@ -49,6 +50,9 @@ object Operacion {
     /** Dos lecturas iguales dentro de este tiempo se consideran la misma persona (no es una repetición sospechosa). */
     private const val DUPLICADO_MS = 20_000L
     private const val ENFRIA_ALERTA_MS = 30_000L
+
+    /** Las validaciones e ingresos que llegaron de otro equipo se guardan con este origen seguido del nombre del equipo. */
+    const val PREFIJO_EQUIPO = "EQUIPO:"
 
     private var iniciado = false
     lateinit var app: Context
@@ -141,6 +145,7 @@ object Operacion {
         info.clear()
         infoVal.clear()
         dirFotos.listFiles()?.forEach { it.delete() }
+        reaplicarEquipos()
         guardar()
         avisar()
     }
@@ -149,6 +154,7 @@ object Operacion {
     fun fusionarDelServidor(encabezados: List<String>, filas: List<List<String>>): IntArray {
         val l = listado ?: Listado.vacio("Servidor").also { listado = it }
         val r = l.fusionar(encabezados, filas)
+        reaplicarEquipos()
         guardar()
         avisar()
         return r
@@ -203,6 +209,102 @@ object Operacion {
 
     fun clave(s: String): String = Listado.normPlaca(s)
 
+    // ---------------------------------------------------------------- red entre equipos
+
+    /** Nombre del otro equipo que hizo esta validación/ingreso, o null si lo hizo este equipo. */
+    fun equipoDe(i: InfoIngreso?): String? =
+        i?.origen?.takeIf { it.startsWith(PREFIJO_EQUIPO) }?.removePrefix(PREFIJO_EQUIPO)?.ifBlank { "otro equipo" }
+
+    /**
+     * Hora que se anota en un evento de esta reserva: la actual, o un instante después de lo último que se sabe de ella
+     * si el reloj de otro equipo va adelantado (así una anulación siempre queda después de lo que anula).
+     */
+    private fun horaEvento(fila: Int): Long {
+        val ahora = System.currentTimeMillis()
+        val l = listado ?: return ahora
+        val ultima = RedLocal.deReserva(l.valor(fila, Listado.Campo.CODIGO), l.placaNormal(fila)).maxOfOrNull { it.hora } ?: return ahora
+        // Solo se corrige un adelanto pequeño; si el reloj de otro equipo está muy mal puesto, no se le hace caso.
+        return if (ultima >= ahora && ultima - ahora <= 120_000L) ultima + 1 else ahora
+    }
+
+    /** Llegó un aviso de otro equipo (hilo principal): se aplica a la reserva si corresponde. */
+    fun aplicarDeEquipo(e: EventoRed) = aplicarDeEquipos(listOf(e))
+
+    /** Varios avisos juntos (por ejemplo, un equipo que se pone al día): se aplican y se guarda una sola vez. */
+    fun aplicarDeEquipos(eventos: List<EventoRed>) {
+        val l = listado ?: return
+        if (!ajustes.redActiva) return
+        val hoy = EventoRed.jornadaDe(System.currentTimeMillis())
+        val corte = ajustes.redCorte
+        val filas = LinkedHashSet<Int>()
+        for (e in eventos) {
+            if (e.jornada != hoy || e.hora <= corte) continue
+            val fila = l.buscarFila(e.codigo, e.placa)
+            if (fila >= 0) filas.add(fila)
+        }
+        var cambios = 0
+        for (f in filas) if (aplicarFila(l, f, hoy, corte)) cambios++
+        if (cambios > 0) {
+            guardar()
+            avisar()
+        }
+    }
+
+    /** Aplica al listado todo lo que se sabe de los otros equipos hoy (por ejemplo, al abrir la app o cargar un listado). */
+    fun sincronizarConEquipos() {
+        if (reaplicarEquipos() > 0) {
+            guardar()
+            avisar()
+        }
+    }
+
+    /** @return cuántas reservas cambiaron. Se puede repetir sin problema: el resultado no depende de cuántas veces se llame. */
+    private fun reaplicarEquipos(): Int {
+        val l = listado ?: return 0
+        if (!ajustes.redActiva) return 0
+        val hoy = EventoRed.jornadaDe(System.currentTimeMillis())
+        val corte = ajustes.redCorte
+        val filas = LinkedHashSet<Int>()
+        for (e in RedLocal.eventosDesde(corte + 1)) {
+            if (e.jornada != hoy) continue
+            val fila = l.buscarFila(e.codigo, e.placa)
+            if (fila >= 0) filas.add(fila)
+        }
+        var cambios = 0
+        for (f in filas) if (aplicarFila(l, f, hoy, corte)) cambios++
+        return cambios
+    }
+
+    private fun aplicarFila(l: Listado, fila: Int, hoy: String, corte: Long): Boolean {
+        val codigo = l.valor(fila, Listado.Campo.CODIGO)
+        val kc = clave(codigo)
+        val eventos = RedLocal.deReserva(codigo, l.placaNormal(fila)).filter {
+            it.jornada == hoy && it.hora > corte && (kc.isEmpty() || it.codigo.isBlank() || clave(it.codigo) == kc)
+        }
+        if (eventos.isEmpty()) return false
+        val c = EstadoCompartido.calcular(eventos, l.validaciones[fila], l.ingresos[fila])
+        if (!c.hayCambio()) return false
+        if (c.quitarValidacion) {
+            l.validaciones.remove(fila)
+            infoVal.remove(fila)?.foto?.let { File(app.filesDir, it).delete() }
+        }
+        c.validacion?.let { hora ->
+            l.validaciones[fila] = hora
+            val o = c.origenValidacion
+            infoVal[fila] = InfoIngreso(o?.id() ?: UUID.randomUUID().toString(), PREFIJO_EQUIPO + o?.equipo.orEmpty(), "", null)
+        }
+        if (c.quitarIngreso) {
+            l.ingresos.remove(fila)
+            info.remove(fila)?.foto?.let { File(app.filesDir, it).delete() }
+        }
+        c.ingreso?.let { hora ->
+            l.ingresos[fila] = hora
+            val o = c.origenIngreso
+            info[fila] = InfoIngreso(o?.id() ?: UUID.randomUUID().toString(), PREFIJO_EQUIPO + o?.equipo.orEmpty(), "", null)
+        }
+        return true
+    }
+
     // ---------------------------------------------------------------- lecturas: validar o ingresar
 
     /**
@@ -221,7 +323,7 @@ object Operacion {
         accion: Accion? = null
     ): Resultado {
         val l = listado ?: throw IllegalStateException("No hay listado")
-        l.ingresos[fila]?.let { return Resultado.YaIngreso(fila, it) }
+        l.ingresos[fila]?.let { return Resultado.YaIngreso(fila, it, equipoDe(info[fila])) }
         val ahora = System.currentTimeMillis()
         val aviso = avisoTipo(fila, tipoVisto, placaLeida, foto)
 
@@ -235,7 +337,7 @@ object Operacion {
                         "Ya se había validado a las ${hora(previa)}. Puede ser un QR o una placa repetida."
                     )
                 }
-                return Resultado.YaValidado(fila, previa, sospechoso)
+                return Resultado.YaValidado(fila, previa, sospechoso, equipoDe(infoVal[fila]))
             }
             validar(fila, origen, placaLeida, foto)
             return Resultado.Validado(fila, aviso)
@@ -261,12 +363,13 @@ object Operacion {
 
     private fun validar(fila: Int, origen: Origen, placaLeida: String?, foto: Bitmap?) {
         val l = listado ?: return
-        val ahora = System.currentTimeMillis()
+        val ahora = horaEvento(fila)
         l.validaciones[fila] = ahora
         val id = UUID.randomUUID().toString()
         val archivoFoto = foto?.let { guardarFoto(id, it) }
         infoVal[fila] = InfoIngreso(id, origen.api, placaLeida.orEmpty(), archivoFoto)
         guardar()
+        RedLocal.publicar(EventoRed.VALIDACION, fila, ahora)
         if (ajustes.enviarAlValidar) {
             val e = nuevoEvento("VALIDACION", fila, "VALIDADA", "VIA")
             e.put("id_validacion", id)
@@ -282,12 +385,13 @@ object Operacion {
 
     private fun ingresar(fila: Int, origen: Origen, placaLeida: String?, foto: Bitmap?) {
         val l = listado ?: return
-        val ahora = System.currentTimeMillis()
+        val ahora = horaEvento(fila)
         l.ingresos[fila] = ahora
         val id = UUID.randomUUID().toString()
         val archivoFoto = foto?.let { guardarFoto(id, it) }
         info[fila] = InfoIngreso(id, origen.api, placaLeida.orEmpty(), archivoFoto)
         guardar()
+        RedLocal.publicar(EventoRed.INGRESO, fila, ahora)
         val e = nuevoEvento("INGRESO", fila, "INGRESADA", "INTERIOR")
         e.put("id_ingreso", id)
         e.put("fecha_ingreso", iso(ahora))
@@ -307,9 +411,12 @@ object Operacion {
     fun anular(fila: Int) {
         val l = listado ?: return
         val e: JSONObject
+        val tipoRed: String
+        val horaRed = horaEvento(fila)
         if (l.ingresado(fila)) {
             val previo = info[fila]
             val tiempo = l.ingresos[fila]
+            tipoRed = EventoRed.ANULA_INGRESO
             l.ingresos.remove(fila)
             e = nuevoEvento("ANULACION", fila, if (l.validado(fila)) "VALIDADA" else "PENDIENTE", "INTERIOR")
             e.put("anula", "INGRESO")
@@ -319,6 +426,7 @@ object Operacion {
         } else if (l.validado(fila)) {
             val previo = infoVal[fila]
             val tiempo = l.validaciones[fila]
+            tipoRed = EventoRed.ANULA_VALIDACION
             l.validaciones.remove(fila)
             e = nuevoEvento("ANULACION", fila, "PENDIENTE", "VIA")
             e.put("anula", "VALIDACION")
@@ -327,6 +435,7 @@ object Operacion {
             infoVal.remove(fila)?.foto?.let { File(app.filesDir, it).delete() }
         } else return
         guardar()
+        RedLocal.publicar(tipoRed, fila, horaRed)
         Bandeja.agregar(app, e)
         Sincronizacion.alRegistrar(app)
         avisar()
@@ -334,6 +443,8 @@ object Operacion {
 
     fun borrarIngresos() {
         val l = listado ?: return
+        // Lo que los otros equipos avisaron hasta ahora ya no se vuelve a aplicar a este equipo.
+        ajustes.redCorte = System.currentTimeMillis()
         l.ingresos.clear()
         l.validaciones.clear()
         info.clear()

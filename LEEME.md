@@ -1,4 +1,4 @@
-# Reservas QR · v1.6
+# Reservas QR · v1.7
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
@@ -19,8 +19,9 @@ Qué hace cada lector se configura en **Ajustes (protegido con PIN)**:
 - **Al validar: enviar el registro al servidor** (sí / no)
 - Atajos: **«Equipo de la VÍA»** y **«Equipo INTERIOR»** dejan todo configurado de una vez.
 
-Los equipos se hablan **a través del servidor**: lo que valida el equipo de la vía llega al de adentro en el siguiente ciclo de sincronización
-(cada 1–30 min, a elección). Si un solo equipo hace los dos momentos, no necesita servidor.
+Los equipos se hablan **directamente entre sí por el Wi-Fi** (ver «Red entre equipos cercanos»): lo que valida el equipo de la vía aparece al instante
+en el de adentro, sin internet. Además, todo se envía al servidor (si lo hay) en el siguiente ciclo de sincronización (cada 1–30 min, a elección).
+Si un solo equipo hace los dos momentos, no necesita servidor ni red.
 
 ### Cómo se evita que se cuelen
 
@@ -48,7 +49,7 @@ Si se olvida: **«Olvidé el PIN»** pide la clave de desbloqueo del equipo y de
 
 ## Pantalla principal
 
-- **Arriba:** foto y nombre del operador, **modo del equipo** (VÍA / INTERIOR), alertas, estado de impresora, lector y envíos,
+- **Arriba:** foto y nombre del operador, **modo del equipo** (VÍA / INTERIOR), alertas, estado de impresora, lector, envíos y **equipos cercanos**,
   contador y **buscador de placa**.
 - **Centro:** lista de Pendientes, Validados o Ingresados.
 - **Abajo, accesos rápidos:** **Escanear QR**, **Leer placa** (rojo) y **Buscar placa**.
@@ -145,6 +146,54 @@ y otra vez si estuvo más de 30 segundos en segundo plano. Si el equipo no tiene
 
 `NOMBRE`, `CODIGO_RESERVA`, `PLACA`, `EVENTO`, `TIPO` (VIP o NORMAL).
 Al menos debe existir el código o la placa. También reconoce títulos parecidos. Al exportar se agregan `ESTADO`, `HORA_VALIDACION` y `HORA_INGRESO`.
+
+## Red entre equipos cercanos (v1.7)
+
+Los Sunmi que están cerca **se avisan entre sí, en segundo plano, lo que leen**: si el equipo de la vía valida un carro, el de adentro lo sabe
+en menos de un segundo (y viceversa); si dos equipos de adentro leen el mismo carro, el segundo ve «YA INGRESÓ en INTERIOR 1» y no imprime otro ticket.
+Si se anula algo en un equipo, se anula en todos.
+
+**Tecnología elegida: Wi-Fi en la misma red local** (el Wi-Fi de un router, tenga o no internet, o la zona Wi-Fi de uno de los equipos).
+Bluetooth y NFC se descartaron: el NFC solo funciona a ~4 cm (hay que acercar un equipo a otro) y el Bluetooth exige emparejar cada par de equipos, alcanza ~10 m y aguanta pocas conexiones a la vez.
+Tampoco se usa «Nearby/Google», porque necesita los servicios de Google Play y la app está pensada para funcionar sin ellos.
+
+### Cómo funciona
+
+1. Cada equipo avisa cada 4 s «aquí estoy» por la red local (UDP) y así los demás lo encuentran solos. No hay que emparejar ni escribir nada.
+2. Entre cada par de equipos queda una conexión abierta (TCP). Cada validación, ingreso o anulación viaja por ahí al instante, **cifrada** (AES-256-GCM) con la **clave de la red**.
+3. Un equipo que recibe un aviso lo reenvía a los demás, así que también llega a los que no alcanzan al equipo que lo originó.
+4. Cada 30 s, y al conectarse, los equipos comparan lo que saben y se pasan lo que le falte al otro. Un equipo que estuvo apagado o sin señal **se pone al día solo**.
+5. Solo viajan datos mínimos (código de reserva, placa, hora, nombre del equipo y operador). **No viajan nombres de clientes ni fotos.**
+6. Lo que llega de otro equipo **no se vuelve a enviar al servidor**: lo envía el equipo que lo originó (así no se duplica).
+
+Funciona **en segundo plano**: la app deja un servicio activo con un aviso fijo («Reservas QR · VÍA 1 · 2 equipos conectados»). Android obliga a mostrar ese aviso.
+
+### Cómo usarla
+
+1. Conecte todos los Sunmi **al mismo Wi-Fi**. (No hace falta que ese Wi-Fi tenga internet.)
+2. En cada equipo: **Ajustes → Red entre equipos**: ponga un **nombre** distinto a cada uno («VÍA 1», «INTERIOR 1»…). Deje la clave vacía o ponga **la misma en todos**.
+3. Abra la app una vez en cada equipo (también después de reiniciar el equipo) y acepte el permiso de notificaciones si lo pide.
+4. Mire el indicador de la pantalla principal: **«● 2 equipos conectados»**. Tóquelo para ver la lista (nombre, dirección y si está conectado).
+5. En Ajustes, **«Permitir trabajar en segundo plano (batería)»** abre la pantalla de Android donde se elige «Sin restricciones» para esta app; recomendado para que no se duerma con la pantalla apagada.
+
+### Si no se encuentran
+
+- Verifique que **todos tengan la misma clave de red** y estén en el **mismo Wi-Fi**.
+- Algunos routers tienen **«aislamiento de clientes / AP isolation»**: impide que los equipos se vean. Desactívelo, o use la zona Wi-Fi de uno de los Sunmi.
+- Si los equipos tienen **datos móviles (4G)** encendidos y el Wi-Fi no tiene internet, apáguelos para la prueba (la app intenta usar el Wi-Fi igualmente).
+- Como último recurso, en **Ajustes → Red entre equipos → IP de otros equipos**, escriba las direcciones IP de los demás (se ven en «Equipos cercanos» de cada uno). Con IP fija en el router es lo más seguro.
+- **Cambie la clave de red** (la predeterminada viene dentro de la app y cualquiera que tenga el APK podría conocerla) y póngala igual en todos: quien no la tenga no puede leer ni enviar avisos.
+
+### Detalles a tener en cuenta
+
+- **Los relojes deben estar en hora** (el Sunmi lo hace solo con internet o red celular). Con diferencias grandes la anulación puede no ganarle a la validación.
+- El **día de operación cambia a las 5:00 a. m.**: solo se aplican avisos del día de hoy; los de ayer se ignoran aunque el listado siga cargado.
+- Los avisos se conservan 48 horas en cada equipo.
+- **«Borrar ingresos»** limpia solo ese equipo y hace que no vuelva a aplicar lo anterior; para empezar de cero un día de pruebas hágalo en **todos** los equipos.
+- Si dos equipos validan la misma reserva casi a la vez, cada uno conserva su hora; para los demás cuenta la más temprana.
+- Lo que un equipo hace sin ningún otro cerca **queda guardado** y se entrega cuando aparezcan.
+- Mientras el servicio está activo el equipo mantiene despiertos el Wi-Fi y el procesador, lo que gasta algo más de batería: lo mejor es tener los equipos cargando. Para apagarlo, desmarque **«Compartir con los equipos cercanos»** en Ajustes.
+- Las direcciones manuales deben ser **IP** (por ejemplo `192.168.1.21`), no nombres.
 
 ## Lector Sunmi
 

@@ -259,6 +259,39 @@ class Ajustes(ctx: Context) {
         get() = texto("ultimaSinc", "")
         set(v) = guardar("ultimaSinc", v)
 
+    // ---- Red entre equipos cercanos (Wi-Fi local, sin internet)
+    /** Compartir en segundo plano lo que se lee con los otros equipos que estén en la misma red Wi-Fi. */
+    var redActiva: Boolean
+        get() = p.getBoolean("redActiva", true)
+        set(v) = guardar("redActiva", v)
+
+    /** Cómo se llama este equipo para los demás («VÍA 1», «INTERIOR 2»). Si está vacío se usa «Equipo ABCD». */
+    var nombreEquipo: String
+        get() = texto("nombreEquipo", "").ifBlank { "Equipo " + idDispositivo.filter { it.isLetterOrDigit() }.takeLast(4).uppercase() }
+        set(v) = guardar("nombreEquipo", v)
+
+    /** Clave de la red de equipos. Debe ser igual en todos; si se deja vacía se usa [CLAVE_RED]. */
+    var redClave: String
+        get() = texto("redClave", "")
+        set(v) = guardar("redClave", v)
+
+    val redClaveEfectiva: String get() = redClave.ifBlank { CLAVE_RED }
+
+    /** IP de otros equipos escritas a mano (solo si no se encuentran solos), separadas por coma o espacio. */
+    var redIps: String
+        get() = texto("redIps", "")
+        set(v) = guardar("redIps", v)
+
+    /** Hora desde la que se aceptan avisos de otros equipos (se mueve al «Borrar ingresos»). */
+    var redCorte: Long
+        get() = p.getLong("redCorte", 0L)
+        set(v) = p.edit().putLong("redCorte", v).apply()
+
+    /** Ya se pidió el permiso de notificaciones (Android 13+) para el aviso del servicio. */
+    var pidioNotificaciones: Boolean
+        get() = p.getBoolean("pidioNotif", false)
+        set(v) = guardar("pidioNotif", v)
+
     val idDispositivo: String
         get() {
             val actual = p.getString("idDispositivo", null)
@@ -277,7 +310,9 @@ class Ajustes(ctx: Context) {
             .trim()
 
     companion object {
-        const val BIENVENIDA = "¡Bienvenido(a), {nombre}! Gracias por su reserva para {evento}. Conserve este ticket para la salida."
+        /** Clave que usan todos los equipos mientras no se escriba otra en Ajustes. */
+        const val CLAVE_RED = "reservasqr-red"
+        const val BIENVENIDA ="¡Bienvenido(a), {nombre}! Gracias por su reserva para {evento}. Conserve este ticket para la salida."
         const val VIP = "Cliente VIP: acceso preferencial. ¡Gracias por acompañarnos!"
     }
 }

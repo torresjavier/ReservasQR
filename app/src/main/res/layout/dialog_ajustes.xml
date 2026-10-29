@@ -186,6 +186,91 @@
         <TextView
             style="@style/TituloSeccion"
             android:layout_marginTop="18dp"
+            android:text="RED ENTRE EQUIPOS" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Los equipos que estén en el mismo Wi-Fi (el de un router, con o sin internet, o la zona Wi-Fi de uno de ellos) se avisan entre sí, en segundo plano, lo que validan o registran. No usa internet ni emparejar nada."
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajRedActiva"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Compartir con los equipos cercanos" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Nombre de este equipo"
+            app:helperText="Así lo verán los demás. Ej: VÍA 1, INTERIOR 2.">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajNombreEquipo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textCapCharacters"
+                android:maxLength="24" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Clave de la red de equipos"
+            app:endIconMode="password_toggle"
+            app:helperText="Debe ser IGUAL en todos los equipos. Si la deja vacía se usa la clave predeterminada.">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajRedClave"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textPassword"
+                android:maxLength="40" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="IP de otros equipos (solo si no se encuentran solos)"
+            app:helperText="Opcional. Separadas por coma. Ej: 192.168.1.21, 192.168.1.22">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajRedIps"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri"
+                android:maxLength="200" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/ajVerEquipos"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Ver equipos cercanos"
+            android:textColor="@color/blanco"
+            app:strokeColor="@color/tarjeta_borde" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/ajRedBateria"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Permitir trabajar en segundo plano (batería)"
+            android:textColor="@color/blanco"
+            app:strokeColor="@color/tarjeta_borde" />
+
+        <TextView
+            style="@style/TituloSeccion"
+            android:layout_marginTop="18dp"
             android:text="SERVIDOR" />
 
         <com.google.android.material.textfield.TextInputLayout
