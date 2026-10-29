@@ -282,6 +282,26 @@ class Ajustes(ctx: Context) {
         get() = texto("redIps", "")
         set(v) = guardar("redIps", v)
 
+    /**
+     * Papel de este equipo frente al servidor: «satélite» es el único que sube los registros y descarga las reservas
+     * (y se las reparte a los demás por el Wi-Fi). Valores: NINGUNO (entrega todo al satélite), VIA, INTERIOR o AMBOS.
+     * Hasta que se elija otro, todos los equipos son satélites de ambos momentos, como en la versión anterior.
+     */
+    var satelite: String
+        get() = texto("satelite", RedEquipos.ROL_AMBOS).let { if (it in ROLES) it else RedEquipos.ROL_AMBOS }
+        set(v) = guardar("satelite", if (v in ROLES) v else RedEquipos.ROL_AMBOS)
+
+    /** Este equipo habla con el servidor (sube registros y descarga reservas). */
+    val esSatelite: Boolean get() = RedEquipos.esSatelite(satelite)
+
+    /** Este equipo es el que sube al servidor los registros de ese momento («VIA» o «INTERIOR»). */
+    fun cubre(momento: String): Boolean = RedEquipos.cubre(satelite, momento)
+
+    /** Sonar un pitido cuando se lee una reserva (si no se encuentra o hay algo raro, el equipo vibra). */
+    var sonidoAlLeer: Boolean
+        get() = p.getBoolean("sonidoAlLeer", true)
+        set(v) = guardar("sonidoAlLeer", v)
+
     /** Hora desde la que se aceptan avisos de otros equipos (se mueve al «Borrar ingresos»). */
     var redCorte: Long
         get() = p.getLong("redCorte", 0L)
@@ -312,6 +332,7 @@ class Ajustes(ctx: Context) {
     companion object {
         /** Clave que usan todos los equipos mientras no se escriba otra en Ajustes. */
         const val CLAVE_RED = "reservasqr-red"
+        val ROLES = setOf(RedEquipos.ROL_NINGUNO, RedEquipos.ROL_VIA, RedEquipos.ROL_INTERIOR, RedEquipos.ROL_AMBOS)
         const val BIENVENIDA ="¡Bienvenido(a), {nombre}! Gracias por su reserva para {evento}. Conserve este ticket para la salida."
         const val VIP = "Cliente VIP: acceso preferencial. ¡Gracias por acompañarnos!"
     }

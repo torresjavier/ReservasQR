@@ -215,6 +215,38 @@ public final class RegistroEventos {
         return borrados;
     }
 
+    /**
+     * Cuántas reservas lleva cada equipo en la jornada [jornada]: {validadas, ingresadas}. Una reserva cuenta si lo último
+     * que hizo ese equipo con ella fue validarla (o ingresarla); si luego la anuló, ya no cuenta.
+     */
+    public synchronized Map<String, int[]> contarPorOrigen(String jornada) {
+        return contarPorOrigen(jornada, null);
+    }
+
+    /** Igual, sin contar lo que se anotó a nombre de [excluirEquipo] (por ejemplo «SERVIDOR»: estados que no hizo ese equipo). */
+    public synchronized Map<String, int[]> contarPorOrigen(String jornada, String excluirEquipo) {
+        Map<String, int[]> r = new HashMap<>();
+        for (Map.Entry<String, TreeMap<Long, EventoRed>> en : porOrigen.entrySet()) {
+            Map<String, EventoRed> ultV = new HashMap<>();
+            Map<String, EventoRed> ultI = new HashMap<>();
+            for (EventoRed e : en.getValue().values()) {
+                if (!jornada.equals(e.jornada)) continue;
+                if (excluirEquipo != null && excluirEquipo.equals(e.equipo)) continue;
+                String kc = EventoRed.clave(e.codigo);
+                String k = kc.isEmpty() ? "P" + EventoRed.clave(e.placa) : "C" + kc;
+                boolean deValidacion = EventoRed.VALIDACION.equals(e.tipo) || EventoRed.ANULA_VALIDACION.equals(e.tipo);
+                Map<String, EventoRed> m = deValidacion ? ultV : ultI;
+                EventoRed previo = m.get(k);
+                if (previo == null || e.hora >= previo.hora) m.put(k, e);
+            }
+            int v = 0, i = 0;
+            for (EventoRed e : ultV.values()) if (EventoRed.VALIDACION.equals(e.tipo)) v++;
+            for (EventoRed e : ultI.values()) if (EventoRed.INGRESO.equals(e.tipo)) i++;
+            if (v > 0 || i > 0) r.put(en.getKey(), new int[]{v, i});
+        }
+        return r;
+    }
+
     /** Equipos de origen que aparecen en el registro. */
     public synchronized Set<String> origenes() {
         return new HashSet<>(porOrigen.keySet());

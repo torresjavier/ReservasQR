@@ -53,6 +53,8 @@ object Operacion {
 
     /** Las validaciones e ingresos que llegaron de otro equipo se guardan con este origen seguido del nombre del equipo. */
     const val PREFIJO_EQUIPO = "EQUIPO:"
+    /** Nombre con el que se avisa a los demás equipos un estado que se supo por el servidor. */
+    const val EQUIPO_SERVIDOR = "SERVIDOR"
 
     private var iniciado = false
     lateinit var app: Context
@@ -148,11 +150,16 @@ object Operacion {
         reaplicarEquipos()
         guardar()
         avisar()
+        // Si este equipo es satélite, el listado nuevo se reparte a los demás equipos.
+        RedLocal.tablaCambio()
     }
 
-    /** Agrega/actualiza reservas recibidas del servidor. Devuelve {nuevas, actualizadas}. */
-    fun fusionarDelServidor(encabezados: List<String>, filas: List<List<String>>): IntArray {
-        val l = listado ?: Listado.vacio("Servidor").also { listado = it }
+    /**
+     * Agrega/actualiza reservas recibidas del servidor (o de un satélite por la red de equipos, con [nombre] distinto).
+     * Devuelve {nuevas, actualizadas}.
+     */
+    fun fusionarDelServidor(encabezados: List<String>, filas: List<List<String>>, nombre: String = "Servidor"): IntArray {
+        val l = listado ?: Listado.vacio(nombre).also { listado = it }
         val r = l.fusionar(encabezados, filas)
         reaplicarEquipos()
         guardar()
@@ -169,6 +176,7 @@ object Operacion {
         val l = listado ?: return 0
         val enCola = Bandeja.claves(app)
         var cambios = 0
+        val nuevos = ArrayList<Triple<String, Int, Long>>()
         for (i in 0 until lista.length()) {
             val o = lista.optJSONObject(i) ?: continue
             val estado = o.optString("estado", "").uppercase(Locale.ROOT)
@@ -180,12 +188,16 @@ object Operacion {
             if (clave(codigo) in enCola || clave(placa) in enCola) continue
             if (estado.startsWith("INGRES")) {
                 if (!l.ingresos.containsKey(fila)) {
-                    l.ingresos[fila] = analizarIso(o.optString("fecha_ingreso", "")) ?: System.currentTimeMillis()
+                    val hora = analizarIso(o.optString("fecha_ingreso", "")) ?: System.currentTimeMillis()
+                    l.ingresos[fila] = hora
+                    nuevos.add(Triple(EventoRed.INGRESO, fila, hora))
                     cambios++
                 }
             } else if (estado.startsWith("VALID")) {
                 if (!l.ingresos.containsKey(fila) && !l.validaciones.containsKey(fila)) {
-                    l.validaciones[fila] = analizarIso(o.optString("fecha_validacion", "")) ?: System.currentTimeMillis()
+                    val hora = analizarIso(o.optString("fecha_validacion", "")) ?: System.currentTimeMillis()
+                    l.validaciones[fila] = hora
+                    nuevos.add(Triple(EventoRed.VALIDACION, fila, hora))
                     cambios++
                 }
             }
@@ -193,6 +205,8 @@ object Operacion {
         if (cambios > 0) {
             guardar()
             avisar()
+            // Los demás equipos no consultan al servidor: este les cuenta lo que el servidor dice.
+            for ((tipo, fila, hora) in nuevos) RedLocal.publicar(tipo, fila, hora, EQUIPO_SERVIDOR)
         }
         return cambios
     }

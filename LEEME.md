@@ -1,4 +1,4 @@
-# Reservas QR · v1.7
+# Reservas QR · v1.8
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
@@ -163,8 +163,8 @@ Tampoco se usa «Nearby/Google», porque necesita los servicios de Google Play y
 2. Entre cada par de equipos queda una conexión abierta (TCP). Cada validación, ingreso o anulación viaja por ahí al instante, **cifrada** (AES-256-GCM) con la **clave de la red**.
 3. Un equipo que recibe un aviso lo reenvía a los demás, así que también llega a los que no alcanzan al equipo que lo originó.
 4. Cada 30 s, y al conectarse, los equipos comparan lo que saben y se pasan lo que le falte al otro. Un equipo que estuvo apagado o sin señal **se pone al día solo**.
-5. Solo viajan datos mínimos (código de reserva, placa, hora, nombre del equipo y operador). **No viajan nombres de clientes ni fotos.**
-6. Lo que llega de otro equipo **no se vuelve a enviar al servidor**: lo envía el equipo que lo originó (así no se duplica).
+5. Los avisos de validación e ingreso llevan datos mínimos (código de reserva, placa, hora, nombre del equipo y operador). Desde la v1.8 también viajan, **solo hacia el satélite**, la tabla de reservas y los registros pendientes con su foto (ver «Satélite» más abajo).
+6. Lo que llega de otro equipo **no se vuelve a enviar al servidor** como aviso: lo envía el equipo que lo originó, o el satélite si ese equipo no tiene permiso de hablar con el servidor (así no se duplica).
 
 Funciona **en segundo plano**: la app deja un servicio activo con un aviso fijo («Reservas QR · VÍA 1 · 2 equipos conectados»). Android obliga a mostrar ese aviso.
 
@@ -194,6 +194,55 @@ Funciona **en segundo plano**: la app deja un servicio activo con un aviso fijo 
 - Lo que un equipo hace sin ningún otro cerca **queda guardado** y se entrega cuando aparezcan.
 - Mientras el servicio está activo el equipo mantiene despiertos el Wi-Fi y el procesador, lo que gasta algo más de batería: lo mejor es tener los equipos cargando. Para apagarlo, desmarque **«Compartir con los equipos cercanos»** en Ajustes.
 - Las direcciones manuales deben ser **IP** (por ejemplo `192.168.1.21`), no nombres.
+
+## Satélite: un solo equipo habla con el servidor (v1.8)
+
+Para no saturar el servidor ni gastar datos en todos los equipos, **solo el «satélite» consulta las reservas y sube los registros**.
+Los demás equipos **no se comunican con el servidor**: le entregan lo suyo al satélite por el Wi-Fi y de él reciben las reservas.
+
+**Ajustes → Red entre equipos → «Papel de este equipo con el servidor»**:
+
+| Papel | Qué hace |
+|---|---|
+| **Satélite de la VÍA** | Sube al servidor lo de la vía (validaciones) y trae las reservas para la vía. |
+| **Satélite del INTERIOR** | Sube al servidor lo del interior (ingresos, tickets, fotos) y trae las reservas para el interior. |
+| **Satélite de VÍA e INTERIOR** | Hace las dos cosas (es lo normal si hay un solo equipo con servidor). **Es el valor de fábrica.** |
+| **Normal** | No toca el servidor. Entrega sus registros al satélite y recibe de él las reservas. |
+
+Cómo dejarlo:
+
+1. Elija **un satélite para la vía y uno para el interior** (o uno solo para los dos momentos).
+2. En **todos los demás equipos** ponga **«Normal»**. Como de fábrica todos vienen como satélite, **hay que cambiarlo en cada equipo** o seguirán hablando con el servidor.
+3. Solo en el satélite hay que escribir las direcciones del servidor y el token.
+4. Todos los equipos deben estar en el mismo Wi-Fi que su satélite (ver «Red entre equipos cercanos»).
+
+Qué pasa por detrás:
+
+- **Reservas:** cuando el satélite descarga las reservas del servidor (o carga un Excel), **las empuja a todos los equipos**; no hace falta que ninguno más las consulte. Un equipo «Normal» que se conecta después las pide al satélite.
+- **Registros:** un equipo «Normal» deja sus registros (con su foto) en su bandeja y los **entrega al satélite** de ese momento; el satélite los sube al servidor. Si el satélite no está cerca, quedan guardados y se entregan cuando aparezca. Cuando el servidor confirma, el satélite borra la foto.
+- **Estados:** lo que el servidor ya sabe (validadas, ingresadas) lo ve el satélite y lo reparte; se marca como «SERVIDOR» y no se cuenta como trabajo de ningún equipo.
+- **Contadores:** los equipos de vía validan y **informan cuántas reservas han validado**, para que los de interior sepan qué deben registrar y enviar.
+
+### Equipos conectados (Ajustes → «▸ Equipos conectados»)
+
+Lista desplegable con **cada equipo de la red, por nombre del operario y del equipo**:
+
+- su papel (satélite o normal), su dirección IP y si está conectado ahora;
+- **última actualización recibida** y **última enviada** a ese equipo (hora exacta y «hace X»);
+- cuántas reservas **validó** y **ingresó** hoy;
+- la última vez que **subió** y **consultó** al servidor;
+- avisos en rojo si **falta un satélite** para algún momento o si hay **dos satélites** para el mismo momento.
+
+Se refresca sola cada 4 segundos. Tocar el indicador «● n equipos conectados» de la pantalla principal abre una lista rápida.
+
+## Sonido y vibración al leer (v1.8)
+
+- **Lectura buena** (QR o placa): suena **un pitido corto**, para que el operario de la vía sepa que se leyó sin mirar la pantalla.
+- **No encontrada, repetida o con algo raro** (ya validada, sin pasar por la vía, tipo distinto): el equipo **vibra** en lugar de sonar.
+- Si el volumen de multimedia está en cero, o se apaga el pitido en Ajustes, una lectura buena hace una vibración breve.
+- Se activa o desactiva en **Ajustes → «AVISOS AL LEER» → «Sonar un pitido cuando se lee una reserva»**.
+- El pitido de la app usa el **volumen de multimedia** del equipo: súbalo en la vía.
+- El lector físico del Sunmi puede tener su **propio pitido** (Ajustes de Sunmi → Escáner → Sonido); si se oye doble, desactive uno de los dos.
 
 ## Lector Sunmi
 

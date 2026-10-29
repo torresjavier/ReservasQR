@@ -1296,7 +1296,7 @@ class PlacaActivity : AppCompatActivity() {
             is Operacion.Resultado.Validado -> {
                 sesion++
                 txtSesion.text = sesion.toString()
-                vibrar(longArrayOf(0, 90))
+                if (resultado.aviso == null) Avisos.leida(this)   // lectura buena: pitido (con aviso, solo vibra)
                 mostrarAviso(
                     if (vip) Tipo.VIP else Tipo.OK,
                     if (vip) "★ VIP · ACCESO VALIDADO" else "✓ ACCESO VALIDADO",
@@ -1329,7 +1329,7 @@ class PlacaActivity : AppCompatActivity() {
             is Operacion.Resultado.Ingresado -> {
                 sesion++
                 txtSesion.text = sesion.toString()
-                vibrar(longArrayOf(0, if (resultado.sinValidar) 450 else 120))
+                if (resultado.sinValidar || resultado.aviso != null) vibrar(longArrayOf(0, 450)) else Avisos.leida(this)
                 val extra = buildList {
                     add(clase)
                     add(nombre)

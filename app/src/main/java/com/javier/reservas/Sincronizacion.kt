@@ -60,14 +60,42 @@ object Bandeja {
         escribir(ctx, a)
     }
 
+    /** Agrega un registro que llegó de otro equipo, salvo que ya esté en la cola. @return true si lo agregó */
+    @Synchronized fun agregarSiNuevo(ctx: Context, ev: JSONObject): Boolean {
+        val id = ev.optString("id_evento", "")
+        val a = leer(ctx)
+        if (id.isNotEmpty()) {
+            for (i in 0 until a.length()) if (a.getJSONObject(i).optString("id_evento") == id) return false
+        }
+        a.put(ev)
+        escribir(ctx, a)
+        return true
+    }
+
+    /** Cuántos registros de la cola cumplen el [filtro] (todos si no se da). */
+    @Synchronized fun contar(ctx: Context, filtro: ((JSONObject) -> Boolean)?): Int {
+        if (filtro == null) return cantidad(ctx)
+        val a = leer(ctx)
+        var n = 0
+        for (i in 0 until a.length()) if (filtro(a.getJSONObject(i))) n++
+        return n
+    }
+
     @Synchronized fun cantidad(ctx: Context): Int {
         if (pendientes < 0) pendientes = leer(ctx).length()
         return pendientes
     }
 
-    @Synchronized fun primeros(ctx: Context, n: Int): List<JSONObject> {
+    /** Los primeros [n] registros de la cola que cumplen el [filtro] (todos si no se da). */
+    @Synchronized fun primeros(ctx: Context, n: Int, filtro: ((JSONObject) -> Boolean)? = null): List<JSONObject> {
         val a = leer(ctx)
-        return (0 until minOf(n, a.length())).map { a.getJSONObject(it) }
+        val r = ArrayList<JSONObject>()
+        for (i in 0 until a.length()) {
+            if (r.size >= n) break
+            val o = a.getJSONObject(i)
+            if (filtro == null || filtro(o)) r.add(o)
+        }
+        return r
     }
 
     /** Quita de la cola los registros que el servidor confirmó. Devuelve los que se quitaron. */
@@ -154,13 +182,27 @@ object Sincronizacion {
     private var redRegistrada = false
     private var ultimoDisparoRed = 0L
 
-    fun configuradoEnvio(ctx: Context) = Ajustes(ctx).urlEnvio.isNotBlank()
-    fun configuradoReservas(ctx: Context) = Ajustes(ctx).urlReservas.isNotBlank()
+    /** Solo el satélite habla con el servidor: los demás equipos entregan sus registros al satélite por el Wi-Fi. */
+    fun configuradoEnvio(ctx: Context) = Ajustes(ctx).let { it.urlEnvio.isNotBlank() && it.esSatelite }
+    fun configuradoReservas(ctx: Context) = Ajustes(ctx).let { it.urlReservas.isNotBlank() && it.esSatelite }
 
-    /** Se llama después de cada registro: envía cuando se junta el lote. */
+    /** Registros de la cola que sube este equipo (los del momento del que es satélite). */
+    fun propios(ctx: Context): (JSONObject) -> Boolean {
+        val aj = Ajustes(ctx)
+        return { o -> aj.cubre(o.optString("momento", "INTERIOR")) }
+    }
+
+    /** Registros de la cola que este equipo no sube: espera a entregárselos a su satélite. */
+    fun ajenos(ctx: Context): (JSONObject) -> Boolean {
+        val aj = Ajustes(ctx)
+        return { o -> !aj.cubre(o.optString("momento", "INTERIOR")) }
+    }
+
+    /** Se llama después de cada registro: lo entrega al satélite si este equipo no lo sube, o envía cuando se junta el lote. */
     fun alRegistrar(ctx: Context) {
+        RedLocal.entregarPendientes()
         if (!configuradoEnvio(ctx)) return
-        if (Bandeja.cantidad(ctx) >= Ajustes(ctx).loteEnvio) enviarAhora(ctx)
+        if (Bandeja.contar(ctx, propios(ctx)) >= Ajustes(ctx).loteEnvio) enviarAhora(ctx)
     }
 
     fun enviarAhora(ctx: Context) {
@@ -204,7 +246,8 @@ object Sincronizacion {
     // ---------------------------------------------------------------- latido y red
 
     private fun unaVuelta(ctx: Context) {
-        if (configuradoEnvio(ctx) && Bandeja.cantidad(ctx) > 0) enviarAhora(ctx)
+        RedLocal.entregarPendientes()
+        if (configuradoEnvio(ctx) && Bandeja.contar(ctx, propios(ctx)) > 0) enviarAhora(ctx)
         if (configuradoReservas(ctx) && Ajustes(ctx).autoReservas) actualizarReservasAhora(ctx)
     }
 
@@ -267,6 +310,8 @@ object Sincronizacion {
             if (filas.isNotEmpty()) Operacion.fusionarDelServidor(encabezados, filas)
             Operacion.aplicarEstados(lista)
         }
+        // Este equipo es el único que consulta al servidor: lo que trajo se lo reparte a los demás por el Wi-Fi.
+        RedLocal.tablaCambio()
     }
 }
 
@@ -278,13 +323,14 @@ class EnvioWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
         Operacion.iniciar(ctx)
         val aj = Ajustes(ctx)
         val url = aj.urlEnvio
-        if (url.isBlank()) return Result.success()
+        if (url.isBlank() || !aj.esSatelite) return Result.success()
+        val propios = Sincronizacion.propios(ctx)
 
         var tamano = aj.loteEnvio
         var vueltas = 0
         while (vueltas++ < 60) { // hasta 60 lotes por ejecución
             if (isStopped) return Result.success()
-            val lote = Bandeja.primeros(ctx, tamano)
+            val lote = Bandeja.primeros(ctx, tamano, propios)
             if (lote.isEmpty()) {
                 Sincronizacion.ultimoError = null
                 Operacion.avisar()
@@ -338,7 +384,8 @@ class EnvioWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
                     // Si el servidor dice cuáles recibió se quitan solo esos; si no dice nada, todo el lote
                     val quitar = (recibidos ?: ids).intersect(ids) + rechazados.intersect(ids)
                     val quitados = Bandeja.quitar(ctx, quitar)
-                    quitados.filter { it.optString("tipo_evento") == "ALERTA" }.forEach {
+                    // Las fotos de las alertas y las que llegaron de otro equipo solo servían para este envío
+                    quitados.filter { it.optString("tipo_evento") == "ALERTA" || it.optString("foto_archivo", "").startsWith(RedLocal.DIR_FOTOS_RED) }.forEach {
                         val f = it.optString("foto_archivo", "")
                         if (f.isNotBlank()) File(ctx.filesDir, f).delete()
                     }
@@ -380,7 +427,7 @@ class ReservasWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, param
         Operacion.iniciar(ctx)
         val aj = Ajustes(ctx)
         val base = aj.urlReservas
-        if (base.isBlank()) return Result.success()
+        if (base.isBlank() || !aj.esSatelite) return Result.success()
 
         val sep = if (base.contains("?")) "&" else "?"
         val url = base + sep + "dispositivo=" + URLEncoder.encode(aj.idDispositivo, "UTF-8") +

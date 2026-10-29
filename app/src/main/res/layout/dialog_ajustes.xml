@@ -186,6 +186,24 @@
         <TextView
             style="@style/TituloSeccion"
             android:layout_marginTop="18dp"
+            android:text="AVISOS AL LEER" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajSonidoLeer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Sonar un pitido cuando se lee una reserva (por QR o por placa)" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Si la reserva no se encuentra, ya estaba validada o hay algo raro, el equipo vibra en vez de sonar. El pitido usa el volumen de multimedia del equipo; si está en cero, vibra."
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
+
+        <TextView
+            style="@style/TituloSeccion"
+            android:layout_marginTop="18dp"
             android:text="RED ENTRE EQUIPOS" />
 
         <TextView
@@ -216,6 +234,27 @@
                 android:inputType="textCapCharacters"
                 android:maxLength="24" />
         </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Papel de este equipo con el servidor"
+            android:textColor="@color/blanco"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <Spinner
+            android:id="@+id/ajSatelite"
+            android:layout_width="match_parent"
+            android:layout_height="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="El SATÉLITE es el único equipo que sube los registros al servidor y consulta las reservas; después se las reparte a los demás por el Wi-Fi. Elija UN satélite para la vía y UNO para el interior (o uno solo para los dos) y deje los demás en «Normal»: ellos entregan lo suyo al satélite y reciben de él las reservas."
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
 
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
@@ -248,15 +287,61 @@
                 android:maxLength="200" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/ajVerEquipos"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+        <TextView
+            android:id="@+id/ajEquiposTitulo"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="Ver equipos cercanos"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/tarjeta"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="▸  Equipos conectados"
             android:textColor="@color/blanco"
-            app:strokeColor="@color/tarjeta_borde" />
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/ajEquiposCuerpo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/ajEquiposAvisos"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/rojo"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/ajEquiposLista"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <TextView
+                android:id="@+id/ajEquiposVacio"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/texto_suave"
+                android:textSize="12sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/ajSincronizar"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Sincronizar ahora"
+                android:textColor="@color/blanco"
+                app:strokeColor="@color/tarjeta_borde" />
+        </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajRedBateria"

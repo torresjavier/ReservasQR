@@ -14,8 +14,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -70,6 +68,14 @@ import java.util.Locale
 class MainActivity : AppCompatActivity() {
 
     private enum class Estilo { OK, VIP, AVISO, ERROR, INFO }
+
+    /** Papeles que se pueden elegir en Ajustes para este equipo frente al servidor. */
+    private val ROLES_SATELITE = listOf(
+        RedEquipos.ROL_AMBOS to "Satélite de VÍA e INTERIOR (sube y consulta todo)",
+        RedEquipos.ROL_VIA to "Satélite de la VÍA",
+        RedEquipos.ROL_INTERIOR to "Satélite del INTERIOR",
+        RedEquipos.ROL_NINGUNO to "Normal (entrega al satélite por el Wi-Fi)"
+    )
 
     /** Selector de archivos que puede abrir directo en la carpeta de Bluetooth. */
     private class AbrirDocumento : ActivityResultContracts.OpenDocument() {
@@ -578,7 +584,7 @@ class MainActivity : AppCompatActivity() {
         val o = ScanOptions()
         o.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
         o.setPrompt("Apunte al QR de la reserva   ·   ${l.ingresos.size} de ${l.filas.size} ingresados")
-        o.setBeepEnabled(true)
+        o.setBeepEnabled(false)   // el pitido lo da la app solo cuando la reserva existe (Avisos.leida)
         o.setOrientationLocked(false)
         o.setBarcodeImageEnabled(false)
         escanear.launch(o)
@@ -588,8 +594,7 @@ class MainActivity : AppCompatActivity() {
         val l = listado ?: return
         val candidatas = l.buscarQr(texto)
         if (candidatas.isEmpty()) {
-            vibrar(600)
-            tonoError()
+            vibrar(600)   // sin reserva: vibra (el pitido es solo para las lecturas buenas)
             // Alguien sin reserva en el listado: queda como alerta (y se envía al servidor)
             Operacion.alertaSinReserva(Operacion.Origen.QR, texto.trim(), null)
             if (Operacion.accionPara(Operacion.Origen.QR) == Operacion.Accion.VALIDAR) {
@@ -644,7 +649,7 @@ class MainActivity : AppCompatActivity() {
         }
         when (resultado) {
             is Operacion.Resultado.Validado -> {
-                vibrar(if (resultado.aviso != null) 300 else 80)
+                if (resultado.aviso != null) vibrar(300) else Avisos.leida(this)
                 mostrarBanner(
                     if (vip) Estilo.VIP else Estilo.OK,
                     if (vip) "★ VIP · ACCESO VALIDADO" else "✓ ACCESO VALIDADO",
@@ -661,7 +666,6 @@ class MainActivity : AppCompatActivity() {
                 val por = resultado.porEquipo?.let { " en $it" }.orEmpty()
                 if (resultado.sospechoso) {
                     vibrar(500)
-                    tonoError()
                     mostrarBanner(
                         Estilo.ERROR, "⚠ YA SE VALIDÓ", fila, null,
                         "Pasó a las ${fmtHora.format(Date(resultado.hora))}$por. Verifique: puede ser un QR o una placa repetida."
@@ -675,7 +679,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             is Operacion.Resultado.Ingresado -> {
-                vibrar(if (resultado.sinValidar) 400 else 80)
+                if (resultado.sinValidar || resultado.aviso != null) vibrar(400) else Avisos.leida(this)
                 val auto = ajustes.autoImprimir
                 val notas = listOfNotNull(
                     if (resultado.sinValidar) "⚠ No pasó por la vía antes de ingresar." else null,
@@ -702,7 +706,6 @@ class MainActivity : AppCompatActivity() {
             }
             is Operacion.Resultado.SinValidacion -> {
                 vibrar(600)
-                tonoError()
                 mostrarTarjeta(
                     Estilo.ERROR, "✗ NO PASÓ POR LA VÍA", fila, null,
                     secundario = accion("Cancelar") { d, _ -> d.dismiss() },
@@ -914,6 +917,7 @@ class MainActivity : AppCompatActivity() {
         val v = layoutInflater.inflate(R.layout.sheet_menu, null)
         val cont = v.findViewById<LinearLayout>(R.id.menuLista)
         val pendientes = Bandeja.cantidad(this)
+        val satelite = ajustes.esSatelite
 
         fun item(icono: Int, titulo: String, detalle: String, rojo: Boolean = false, accionItem: () -> Unit) {
             val fila = layoutInflater.inflate(R.layout.item_menu, cont, false)
@@ -934,8 +938,13 @@ class MainActivity : AppCompatActivity() {
             confirmarSiHayAvance { pedirArchivo(null) }
         }
         item(R.drawable.ic_bluetooth, "Recibir Excel por Bluetooth", "Hace visible el equipo para recibir el archivo") { mostrarBluetooth() }
-        item(R.drawable.ic_actualizar, "Traer reservas del servidor", "Agrega reservas nuevas sin subir Excel") { actualizarReservas() }
-        item(R.drawable.ic_nube, "Enviar registros ahora", if (pendientes > 0) "$pendientes registros esperando" else "No hay registros pendientes") { enviarAhora() }
+        if (satelite) {
+            item(R.drawable.ic_actualizar, "Traer reservas del servidor", "Agrega reservas nuevas sin subir Excel; luego se las reparte a los demás equipos") { actualizarReservas() }
+            item(R.drawable.ic_nube, "Enviar registros ahora", if (pendientes > 0) "$pendientes registros esperando" else "No hay registros pendientes") { enviarAhora() }
+        } else {
+            item(R.drawable.ic_actualizar, "Pedir reservas al satélite", "Este equipo no consulta al servidor: recibe la tabla del satélite por Wi-Fi") { actualizarReservas() }
+            item(R.drawable.ic_nube, "Entregar registros al satélite", if (pendientes > 0) "$pendientes registros esperando al satélite" else "No hay registros pendientes") { enviarAhora() }
+        }
         item(R.drawable.ic_camara, "Escanear QR con la cámara", "Si el lector Sunmi no está disponible") { iniciarEscaneo(conCamara = true) }
         item(R.drawable.ic_columnas, "Columnas del Excel y plantilla", "Qué datos debe tener el listado") { mostrarColumnas(false) }
         item(R.drawable.ic_compartir, "Exportar ingresos", "Excel con el estado y la hora de cada reserva") { exportar() }
@@ -954,18 +963,44 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------- servidor
 
     private fun enviarAhora() {
+        val n = Bandeja.cantidad(this)
+        if (!ajustes.esSatelite) {
+            // Este equipo no sube al servidor: se los entrega al satélite por el Wi-Fi
+            when {
+                n == 0 -> toast("No hay registros por entregar.")
+                !ajustes.redActiva -> toast("La red entre equipos está apagada: actívela en Ajustes para entregar los registros al satélite.")
+                RedLocal.satelites().isEmpty() -> toast("No se ve ningún satélite en el Wi-Fi. Los $n registros esperan.")
+                else -> {
+                    RedLocal.entregarPendientes()
+                    toast("Entregando $n registros al satélite…")
+                }
+            }
+            return
+        }
         if (!Sincronizacion.configuradoEnvio(this)) {
             servidorNoConfigurado(); return
         }
-        val n = Bandeja.cantidad(this)
-        if (n == 0) {
-            toast("No hay registros por enviar."); return
+        val propios = Bandeja.contar(this, Sincronizacion.propios(this))
+        RedLocal.entregarPendientes()
+        if (propios == 0) {
+            toast(if (n == 0) "No hay registros por enviar." else "Lo que queda es de otro satélite: se le entrega por el Wi-Fi."); return
         }
         Sincronizacion.enviarAhora(this)
-        toast("Enviando $n registros (cuando haya internet)…")
+        toast("Enviando $propios registros (cuando haya internet)…")
     }
 
     private fun actualizarReservas() {
+        if (!ajustes.esSatelite) {
+            when {
+                !ajustes.redActiva -> toast("La red entre equipos está apagada: actívela en Ajustes para recibir las reservas del satélite.")
+                RedLocal.satelites().isEmpty() -> toast("No se ve ningún satélite en el Wi-Fi.")
+                else -> {
+                    RedLocal.pedirTablas()
+                    toast("Pidiendo las reservas al satélite…")
+                }
+            }
+            return
+        }
         if (!Sincronizacion.configuradoReservas(this)) {
             servidorNoConfigurado(); return
         }
@@ -1376,7 +1411,11 @@ class MainActivity : AppCompatActivity() {
         val nombreEquipo = v.findViewById<EditText>(R.id.ajNombreEquipo)
         val redClave = v.findViewById<EditText>(R.id.ajRedClave)
         val redIps = v.findViewById<EditText>(R.id.ajRedIps)
+        val sonido = v.findViewById<MaterialSwitch>(R.id.ajSonidoLeer)
+        val satelite = v.findViewById<Spinner>(R.id.ajSatelite)
 
+        satelite.adapter = adaptadorSpinner(ROLES_SATELITE.map { it.second })
+        satelite.setSelection(ROLES_SATELITE.indexOfFirst { it.first == ajustes.satelite }.coerceAtLeast(0))
         lote.adapter = adaptadorSpinner(Sincronizacion.LOTES.map { "$it registros" })
         lote.setSelection(Sincronizacion.LOTES.indexOf(ajustes.loteEnvio).coerceAtLeast(0))
         intervalo.adapter = adaptadorSpinner(Sincronizacion.INTERVALOS.map { if (it == 1) "1 minuto" else "$it minutos" })
@@ -1404,7 +1443,8 @@ class MainActivity : AppCompatActivity() {
         nombreEquipo.setText(ajustes.nombreEquipo)
         redClave.setText(ajustes.redClave)
         redIps.setText(ajustes.redIps)
-        v.findViewById<View>(R.id.ajVerEquipos).setOnClickListener { mostrarEquiposCercanos() }
+        sonido.isChecked = ajustes.sonidoAlLeer
+        val cierraEquipos = prepararListaEquipos(v)
         v.findViewById<View>(R.id.ajRedBateria).setOnClickListener { permitirSegundoPlano() }
 
         v.findViewById<View>(R.id.ajPerfilVia).setOnClickListener {
@@ -1452,6 +1492,11 @@ class MainActivity : AppCompatActivity() {
             ajustes.nombreEquipo = nombreEquipo.text.toString()
             ajustes.redClave = redClave.text.toString()
             ajustes.redIps = redIps.text.toString()
+            ajustes.sonidoAlLeer = sonido.isChecked
+            ajustes.satelite = ROLES_SATELITE[satelite.selectedItemPosition.coerceIn(0, ROLES_SATELITE.size - 1)].first
+            if (!ajustes.redActiva && !ajustes.esSatelite) {
+                Toast.makeText(this, "Con la red entre equipos apagada y el papel «Normal», este equipo no enviará nada al servidor.", Toast.LENGTH_LONG).show()
+            }
             RedLocal.aplicarAjustes(this)
             Sincronizacion.programar(this)
             refrescar()
@@ -1467,44 +1512,179 @@ class MainActivity : AppCompatActivity() {
                 if (Bandeja.cantidad(this) > 0) Sincronizacion.enviarAhora(this)
             }
             .setNegativeButton("Cancelar", null)
+            .create()
+            .also { it.setOnDismissListener { cierraEquipos() } }
             .show()
     }
 
-    // ---------------------------------------------------------------- equipos cercanos
+    // ---------------------------------------------------------------- equipos conectados (desplegable en Ajustes)
 
-    /** Lista los equipos que se encuentran por el Wi-Fi y si están conectados con este. */
-    private fun mostrarEquiposCercanos() {
-        val a = ajustes
-        val t = StringBuilder()
-        t.append("Este equipo: ").append(a.nombreEquipo).append('\n')
-        val ips = RedLocal.misDirecciones()
-        t.append("Dirección en la red: ").append(if (ips.isEmpty()) "sin Wi-Fi" else ips.joinToString(", ")).append("\n\n")
-        if (!a.redActiva) {
-            t.append("La red entre equipos está apagada. Se activa en Ajustes → Red entre equipos.")
-        } else if (!RedLocal.activa()) {
-            t.append(RedLocal.error ?: "La red entre equipos se está iniciando…")
-        } else {
-            val eq = RedLocal.equipos()
-            if (eq.isEmpty()) {
-                t.append("No se ha encontrado ningún equipo.\n\nVerifique que los demás estén encendidos, con la app abierta una vez, en el mismo Wi-Fi y con la misma clave de red. Si tienen datos móviles (4G), pruebe apagarlos.")
-            } else {
-                for (e in eq) {
-                    val estado = if (e.conectado) "● conectado" else "○ visto, conectando…"
-                    t.append(e.nombre.ifBlank { "(sin nombre)" }).append("  ·  ").append(e.ip).append("\n   ").append(estado)
-                    if (e.eventosRecibidos > 0) t.append("  ·  ").append(e.eventosRecibidos).append(" avisos")
-                    t.append("\n")
-                }
+    private val fmtHoraSeg = SimpleDateFormat("hh:mm:ss a", co)
+
+    /** «hace 12 s (09:41:07 p. m.)» o «nunca». */
+    private fun haceCuanto(t: Long): String {
+        if (t <= 0L) return "nunca"
+        val s = ((System.currentTimeMillis() - t) / 1000L).coerceAtLeast(0L)
+        val rel = when {
+            s < 5 -> "ahora mismo"
+            s < 60 -> "hace $s s"
+            s < 3600 -> "hace ${s / 60} min"
+            else -> "hace ${s / 3600} h ${(s % 3600) / 60} min"
+        }
+        return "$rel (${fmtHoraSeg.format(Date(t))})"
+    }
+
+    private fun nombreRol(rol: String): String = when (rol) {
+        RedEquipos.ROL_AMBOS -> "Satélite de VÍA e INTERIOR"
+        RedEquipos.ROL_VIA -> "Satélite de la VÍA"
+        RedEquipos.ROL_INTERIOR -> "Satélite del INTERIOR"
+        RedEquipos.ROL_NINGUNO -> "Normal (entrega al satélite)"
+        else -> "Versión anterior de la app"
+    }
+
+    /**
+     * Prepara el desplegable «Equipos conectados» de Ajustes: al tocarlo se abre la lista (operario, papel, última
+     * actualización recibida y enviada, validadas e ingresadas) y se mantiene al día mientras Ajustes esté abierto.
+     * @return lo que hay que llamar al cerrar Ajustes
+     */
+    private fun prepararListaEquipos(v: View): () -> Unit {
+        val titulo = v.findViewById<TextView>(R.id.ajEquiposTitulo)
+        val cuerpo = v.findViewById<View>(R.id.ajEquiposCuerpo)
+        val avisos = v.findViewById<TextView>(R.id.ajEquiposAvisos)
+        val lista = v.findViewById<LinearLayout>(R.id.ajEquiposLista)
+        val vacio = v.findViewById<TextView>(R.id.ajEquiposVacio)
+
+        fun pintar() {
+            if (cuerpo.visibility != View.VISIBLE) return
+            pintarEquipos(lista, avisos, vacio)
+            val n = RedLocal.detalleEquipos().count { it.conectado }
+            titulo.text = "▾  Equipos conectados ($n)"
+        }
+        val oyente: () -> Unit = { pintar() }
+        val refresco = object : Runnable {
+            override fun run() {
+                pintar()
+                handler.postDelayed(this, 4_000)
             }
         }
+        titulo.setOnClickListener {
+            val abrir = cuerpo.visibility != View.VISIBLE
+            cuerpo.visibility = if (abrir) View.VISIBLE else View.GONE
+            if (abrir) pintar() else titulo.text = "▸  Equipos conectados"
+        }
+        v.findViewById<View>(R.id.ajSincronizar).setOnClickListener {
+            RedLocal.sincronizarAhora()
+            RedLocal.pedirTablas()
+            if (ajustes.esSatelite) RedLocal.tablaCambio()
+            toast("Comparando lo que sabe cada equipo…")
+        }
+        RedLocal.escuchar(oyente)
+        handler.postDelayed(refresco, 4_000)
+        return {
+            handler.removeCallbacks(refresco)
+            RedLocal.dejarDeEscuchar(oyente)
+        }
+    }
+
+    /** Ventana rápida con los equipos conectados (al tocar el indicador de la red en la pantalla principal; no pide PIN). */
+    private fun mostrarEquiposCercanos() {
+        val m = (16 * resources.displayMetrics.density).toInt()
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(m, m / 2, m, m / 2)
+        }
+        val avisos = TextView(this).apply {
+            setTextColor(getColor(R.color.rojo))
+            textSize = 12f
+        }
+        val lista = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val vacio = TextView(this).apply {
+            setTextColor(getColor(R.color.texto_suave))
+            textSize = 12f
+            setPadding(0, m / 3, 0, 0)
+        }
+        col.addView(avisos)
+        col.addView(lista)
+        col.addView(vacio)
+        fun pintar() = pintarEquipos(lista, avisos, vacio)
+        pintar()
+        val oyente: () -> Unit = { pintar() }
+        val refresco = object : Runnable {
+            override fun run() {
+                pintar()
+                handler.postDelayed(this, 4_000)
+            }
+        }
+        RedLocal.escuchar(oyente)
+        handler.postDelayed(refresco, 4_000)
         MaterialAlertDialogBuilder(this)
-            .setTitle("Equipos cercanos")
-            .setMessage(t.toString().trimEnd())
+            .setTitle("Equipos conectados")
+            .setView(android.widget.ScrollView(this).apply { addView(col) })
             .setPositiveButton("Cerrar", null)
             .setNeutralButton("Sincronizar ahora") { _, _ ->
                 RedLocal.sincronizarAhora()
+                RedLocal.pedirTablas()
                 toast("Comparando lo que sabe cada equipo…")
             }
+            .create()
+            .also {
+                it.setOnDismissListener {
+                    handler.removeCallbacks(refresco)
+                    RedLocal.dejarDeEscuchar(oyente)
+                }
+            }
             .show()
+    }
+
+    private fun pintarEquipos(lista: LinearLayout, avisos: TextView, vacio: TextView) {
+        lista.removeAllViews()
+        if (!ajustes.redActiva) {
+            avisos.visibility = View.GONE
+            vacio.visibility = View.VISIBLE
+            vacio.text = "La red entre equipos está apagada. Se enciende con «Compartir con los equipos cercanos»."
+            return
+        }
+        if (!RedLocal.activa()) {
+            avisos.visibility = View.GONE
+            vacio.visibility = View.VISIBLE
+            vacio.text = RedLocal.error ?: "La red entre equipos se está iniciando…"
+            return
+        }
+        val filas = RedLocal.detalleEquipos()
+        val problemas = RedLocal.avisosDeSatelites()
+        avisos.visibility = if (problemas.isEmpty()) View.GONE else View.VISIBLE
+        avisos.text = problemas.joinToString("\n")
+        for (f in filas) lista.addView(vistaEquipo(f, lista))
+        vacio.visibility = View.VISIBLE
+        vacio.text = if (filas.size <= 1) {
+            "Aún no se ha encontrado otro equipo. Verifique que estén encendidos, con la app abierta una vez, en el mismo Wi-Fi y con la misma clave de red. Si tienen datos móviles (4G), pruebe apagarlos."
+        } else {
+            "Se actualiza sola. El papel y el operario de este equipo cambian al tocar «Guardar»."
+        }
+    }
+
+    private fun vistaEquipo(f: RedLocal.FilaEquipo, padre: LinearLayout): View {
+        val fila = layoutInflater.inflate(R.layout.item_equipo, padre, false)
+        val quien = f.operador.ifBlank { "(sin nombre de operario)" }
+        val titulo = SpannableString((if (f.conectado) "●  " else "○  ") + quien + "  ·  " + f.nombre.ifBlank { "sin nombre" } + if (f.esEste) "  (este equipo)" else "")
+        titulo.setSpan(ForegroundColorSpan(getColor(if (f.conectado) R.color.blanco else R.color.rojo)), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        fila.findViewById<TextView>(R.id.eqTitulo).text = titulo
+        fila.findViewById<TextView>(R.id.eqRol).text =
+            nombreRol(f.rol) + (if (f.ip.isNotBlank()) "  ·  " + f.ip else "") + (if (!f.conectado) "  ·  sin conexión" else "")
+        fila.findViewById<TextView>(R.id.eqRecibido).text = "↓ Última actualización recibida: " + haceCuanto(f.ultimaRecibida)
+        fila.findViewById<TextView>(R.id.eqEnviado).text = "↑ Última actualización enviada: " + haceCuanto(f.ultimaEnviada)
+        fila.findViewById<TextView>(R.id.eqConteo).text = "Hoy: ${f.validadas} validadas · ${f.ingresadas} ingresadas"
+        if (f.esEste) {
+            val sv = fila.findViewById<TextView>(R.id.eqServidor)
+            sv.visibility = View.VISIBLE
+            sv.text = if (!ajustes.esSatelite) {
+                "Servidor: no habla con él (lo hace el satélite)"
+            } else {
+                "Servidor: subió " + haceCuanto(Sincronizacion.ultimoEnvio) + " · consultó " + haceCuanto(Sincronizacion.ultimaDescarga) +
+                    (Sincronizacion.ultimoError?.let { "\n⚠ $it" } ?: "")
+            }
+        }
+        return fila
     }
 
     /** Abre la pantalla de Android donde se quita el ahorro de batería a esta app, para que no se duerma en segundo plano. */
@@ -1754,17 +1934,29 @@ class MainActivity : AppCompatActivity() {
         val lector = EscanerSunmi.disponible && ajustes.usarLectorSunmi
         chipLector.text = punto(if (lector) "Lector Sunmi" else "QR por cámara", lector)
         chipRed.text = punto(RedLocal.resumen(), ajustes.redActiva && RedLocal.activa() && RedLocal.conectados() > 0)
-        chipEnvio.text = if (!Sincronizacion.configuradoEnvio(this)) {
-            punto("Sin servidor", false)
-        } else {
-            val n = Bandeja.cantidad(this)
-            val error = Sincronizacion.ultimoError
-            when {
-                error != null -> punto("$n por enviar · $error", false)
-                n > 0 -> punto("$n por enviar", true)
-                else -> punto("Todo enviado", true)
+        chipEnvio.text = estadoEnvio()
+    }
+
+    /** Texto del indicador de envío: el satélite cuenta lo que sube al servidor; los demás, lo que entregan al satélite. */
+    private fun estadoEnvio(): CharSequence {
+        val ajenos = Bandeja.contar(this, Sincronizacion.ajenos(this))
+        if (!ajustes.esSatelite) {
+            return when {
+                ajenos == 0 -> punto("Normal · lo sube el satélite", true)
+                RedLocal.satelites().isEmpty() -> punto("$ajenos esperando al satélite (no se ve ninguno)", false)
+                else -> punto("$ajenos por entregar al satélite", true)
             }
         }
+        if (!Sincronizacion.configuradoEnvio(this)) return punto("Sin servidor", false)
+        val propios = Bandeja.contar(this, Sincronizacion.propios(this))
+        val error = Sincronizacion.ultimoError
+        var texto = when {
+            error != null -> "$propios por enviar · $error"
+            propios > 0 -> "$propios por enviar"
+            else -> "Todo enviado"
+        }
+        if (ajenos > 0) texto += " · $ajenos de otro satélite"
+        return punto(texto, error == null)
     }
 
     private fun refrescarLista() {
@@ -1831,15 +2023,6 @@ class MainActivity : AppCompatActivity() {
             val v = getSystemService(Vibrator::class.java) ?: return
             if (Build.VERSION.SDK_INT >= 26) v.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
             else v.vibrate(ms)
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun tonoError() {
-        try {
-            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 90)
-            tg.startTone(ToneGenerator.TONE_PROP_NACK, 400)
-            handler.postDelayed({ tg.release() }, 600)
         } catch (_: Exception) {
         }
     }

@@ -56,6 +56,26 @@ public final class RedEquipos {
     /** Cuánto tiempo se conservan los eventos. */
     public static final long RETENCION_MS = 48L * 3_600_000L;
     private static final int MAX_LINEA = 4 * 1024 * 1024;
+    /** Tamaño máximo de los datos de un mensaje de datos (una foto o un trozo de tabla); en hexadecimal y cifrado cabe en MAX_LINEA. */
+    public static final int MAX_DATO = 1_300_000;
+
+    /** Papeles de un equipo frente al servidor: el «satélite» es el único que sube y descarga; los demás le entregan lo suyo. */
+    public static final String ROL_NINGUNO = "NINGUNO";
+    public static final String ROL_VIA = "VIA";
+    public static final String ROL_INTERIOR = "INTERIOR";
+    public static final String ROL_AMBOS = "AMBOS";
+
+    /** @return true si un equipo con este rol se encarga del servidor para ese momento («VIA» o «INTERIOR») */
+    public static boolean cubre(String rol, String momento) {
+        if (rol == null || momento == null) return false;
+        if (ROL_AMBOS.equals(rol)) return true;
+        return rol.equals(momento);
+    }
+
+    /** @return true si el rol es de satélite de algún momento */
+    public static boolean esSatelite(String rol) {
+        return ROL_VIA.equals(rol) || ROL_INTERIOR.equals(rol) || ROL_AMBOS.equals(rol);
+    }
 
     public interface Oyente {
         /** Llegó un evento nuevo de otro equipo (se llama en un hilo de la red, no en el principal). */
@@ -63,6 +83,18 @@ public final class RedEquipos {
 
         /** Cambió la lista de equipos encontrados o conectados (hilo de la red). */
         void alCambiarEquipos();
+
+        /**
+         * Llegó un dato de otro equipo (hilo de la red; debe ser rápido).
+         * @return true si quedó guardado (el otro equipo lo da por entregado); false si no se pudo (lo reintentará)
+         */
+        boolean alDato(String idEquipo, String id, String tipo, String meta, byte[] datos);
+
+        /** El otro equipo confirmó (o rechazó) un dato que se le mandó con {@link #enviarDato}. */
+        void alAcuse(String idEquipo, String id, boolean entregado);
+
+        /** Se completó la conexión con un equipo (llegó su saludo). Buen momento para entregarle lo pendiente. */
+        void alConectarEquipo(String idEquipo);
     }
 
     /**
@@ -80,6 +112,19 @@ public final class RedEquipos {
         public String idEquipo = "";
         public String nombre = "";
         public String clave = "";
+        /** Nombre del operario y papel de este equipo; se consultan cada vez que se avisa, así que pueden cambiar sin reiniciar. */
+        public Supplier<String> operador = new Supplier<String>() {
+            @Override
+            public String get() {
+                return "";
+            }
+        };
+        public Supplier<String> rol = new Supplier<String>() {
+            @Override
+            public String get() {
+                return ROL_NINGUNO;
+            }
+        };
         public int puertoUdp = PUERTO_UDP;
         public int puertoTcp = PUERTO_TCP;
         public long cadaBeaconMs = 4_000;
@@ -104,14 +149,25 @@ public final class RedEquipos {
         public final boolean conectado;
         public final long ultimaVez;
         public final int eventosRecibidos;
+        /** Operario que tiene el equipo (puede estar vacío) y su papel frente al servidor. */
+        public final String operador;
+        public final String rol;
+        /** Cuándo llegó lo último que este equipo nos mandó, y cuándo le mandamos lo último (0 = nunca). */
+        public final long ultimaRecibida;
+        public final long ultimaEnviada;
 
-        Equipo(String id, String nombre, String ip, boolean conectado, long ultimaVez, int eventosRecibidos) {
+        Equipo(String id, String nombre, String ip, boolean conectado, long ultimaVez, int eventosRecibidos,
+               String operador, String rol, long ultimaRecibida, long ultimaEnviada) {
             this.id = id;
             this.nombre = nombre;
             this.ip = ip;
             this.conectado = conectado;
             this.ultimaVez = ultimaVez;
             this.eventosRecibidos = eventosRecibidos;
+            this.operador = operador;
+            this.rol = rol;
+            this.ultimaRecibida = ultimaRecibida;
+            this.ultimaEnviada = ultimaEnviada;
         }
     }
 
@@ -119,8 +175,12 @@ public final class RedEquipos {
         final String id;
         volatile String nombre = "";
         volatile String ip = "";
+        volatile String operador = "";
+        volatile String rol = "";
         volatile int puertoTcp = PUERTO_TCP;
         volatile long ultimaVez = 0;
+        volatile long ultRecibido = 0;
+        volatile long ultEnviado = 0;
         final long primeraVez = System.currentTimeMillis();
         volatile Conexion conexion;
         volatile boolean conectando = false;
@@ -212,7 +272,7 @@ public final class RedEquipos {
         for (Par p : pares.values()) {
             Conexion c = p.conexion;
             boolean ok = c != null && !c.cerrada && c.saludado;
-            r.add(new Equipo(p.id, p.nombre, p.ip, ok, p.ultimaVez, p.recibidos.get()));
+            r.add(new Equipo(p.id, p.nombre, p.ip, ok, p.ultimaVez, p.recibidos.get(), p.operador, p.rol, p.ultRecibido, p.ultEnviado));
         }
         Collections.sort(r, new java.util.Comparator<Equipo>() {
             @Override
@@ -236,10 +296,18 @@ public final class RedEquipos {
 
     /** Anota un evento de este equipo y lo manda al instante a todos los conectados. */
     public EventoRed publicar(String tipo, String codigo, String placa, long hora, String operador) {
+        return publicar(tipo, codigo, placa, hora, operador, cfg.nombre);
+    }
+
+    /**
+     * Igual que el anterior pero con otro nombre de «quién lo hizo» (por ejemplo «SERVIDOR» cuando el estado de una
+     * reserva se supo por el servidor y no por este equipo).
+     */
+    public EventoRed publicar(String tipo, String codigo, String placa, long hora, String operador, String equipo) {
         EventoRed e;
         synchronized (lockSeq) {
             long seq = Math.max(registro.ultimaSeq(cfg.idEquipo) + 1, System.currentTimeMillis() / 1000L);
-            e = new EventoRed(cfg.idEquipo, seq, tipo, EventoRed.jornadaDe(hora), codigo, placa, hora, cfg.nombre, operador);
+            e = new EventoRed(cfg.idEquipo, seq, tipo, EventoRed.jornadaDe(hora), codigo, placa, hora, equipo, operador);
             registro.agregar(e);
         }
         enviarATodos("E\t" + e.codificar(), null);
@@ -249,6 +317,38 @@ public final class RedEquipos {
     /** Pide a todos los conectados que comparen lo que saben, ahora mismo. */
     public void sincronizarAhora() {
         for (Conexion c : conexiones) if (c.saludado) c.enviarResumen();
+    }
+
+    /**
+     * Manda unos datos (una foto con su registro, un trozo de tabla…) a un equipo conectado. El otro equipo responde con
+     * un acuse que llega a {@link Oyente#alAcuse}.
+     * @return false si ese equipo no está conectado ahora o los datos son demasiado grandes (no se manda nada)
+     */
+    public boolean enviarDato(String idEquipo, String id, String tipo, String meta, byte[] datos) {
+        if (datos == null || datos.length > MAX_DATO || idEquipo == null) return false;
+        Par par = pares.get(idEquipo);
+        Conexion c = par == null ? null : par.conexion;
+        if (c == null || c.cerrada || !c.saludado) return false;
+        c.enviar("D\t" + EventoRed.escapar(id) + "\t" + EventoRed.escapar(tipo) + "\t" + EventoRed.escapar(meta) + "\t" + Base64Red.codificar(datos));
+        return true;
+    }
+
+    /** Avisa ya a los equipos conectados que cambió el operario o el papel de este equipo (si no, se enteran con el próximo aviso). */
+    public void actualizarPerfil() {
+        enviarATodos(perfil(), null);
+    }
+
+    private String perfil() {
+        return "S\t" + EventoRed.escapar(valor(cfg.operador)) + "\t" + EventoRed.escapar(valor(cfg.rol));
+    }
+
+    private static String valor(Supplier<String> s) {
+        try {
+            String v = s.get();
+            return v == null ? "" : v;
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 
     private void enviarATodos(String plano, Conexion salvo) {
@@ -277,7 +377,8 @@ public final class RedEquipos {
                 if (plano == null) continue;
                 String[] x = plano.split("\t", -1);
                 if (x.length >= 5 && "B".equals(x[0]) && VERSION.equals(x[1])) {
-                    alAviso(x[2], EventoRed.desescapar(x[3]), parsearPuerto(x[4]), p.getAddress().getHostAddress());
+                    alAviso(x[2], EventoRed.desescapar(x[3]), parsearPuerto(x[4]), p.getAddress().getHostAddress(),
+                            x.length >= 7 ? EventoRed.desescapar(x[5]) : null, x.length >= 7 ? EventoRed.desescapar(x[6]) : null);
                 }
             } catch (RuntimeException ignorada) {
             }
@@ -293,7 +394,7 @@ public final class RedEquipos {
         }
     }
 
-    private void alAviso(String id, String nombre, int puertoTcp, String ip) {
+    private void alAviso(String id, String nombre, int puertoTcp, String ip, String operador, String rol) {
         if (id.isEmpty() || id.equals(cfg.idEquipo)) return;
         Par par = pares.get(id);
         boolean nuevo = false;
@@ -302,17 +403,20 @@ public final class RedEquipos {
             Par previo = pares.putIfAbsent(id, par);
             if (previo != null) par = previo; else nuevo = true;
         }
-        boolean cambio = nuevo || !nombre.equals(par.nombre) || !ip.equals(par.ip);
+        boolean cambio = nuevo || !nombre.equals(par.nombre) || !ip.equals(par.ip)
+                || (operador != null && !operador.equals(par.operador)) || (rol != null && !rol.equals(par.rol));
         par.nombre = nombre;
         par.ip = ip;
+        if (operador != null) par.operador = operador;
+        if (rol != null) par.rol = rol;
         par.puertoTcp = puertoTcp;
         par.ultimaVez = System.currentTimeMillis();
         if (cambio) oyente.alCambiarEquipos();
     }
 
     private void enviarAvisos() {
-        byte[] datos = sello.sellar("B\t" + VERSION + "\t" + cfg.idEquipo + "\t" + EventoRed.escapar(cfg.nombre) + "\t" + cfg.puertoTcp)
-                .getBytes(StandardCharsets.UTF_8);
+        byte[] datos = sello.sellar("B\t" + VERSION + "\t" + cfg.idEquipo + "\t" + EventoRed.escapar(cfg.nombre) + "\t" + cfg.puertoTcp
+                + "\t" + EventoRed.escapar(valor(cfg.operador)) + "\t" + EventoRed.escapar(valor(cfg.rol))).getBytes(StandardCharsets.UTF_8);
         List<InetSocketAddress> destinos;
         try {
             destinos = cfg.destinosUdp.get();
@@ -351,7 +455,7 @@ public final class RedEquipos {
             try {
                 Socket s = servidor.accept();
                 nuevaConexion(s, false, null);
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
                 if (!activo) break;
                 dormir(200);
             }
@@ -368,7 +472,11 @@ public final class RedEquipos {
         Conexion c = new Conexion(s, iniciadaPorMi);
         if (par != null) c.idPar = par.id;
         conexiones.add(c);
-        c.iniciar();
+        try {
+            c.iniciar();
+        } catch (RuntimeException e) {   // se está apagando la red
+            c.cerrar();
+        }
         return c;
     }
 
@@ -480,7 +588,8 @@ public final class RedEquipos {
         }
 
         void iniciar() {
-            enviar("H\t" + VERSION + "\t" + cfg.idEquipo + "\t" + EventoRed.escapar(cfg.nombre) + "\t" + cfg.puertoTcp);
+            enviar("H\t" + VERSION + "\t" + cfg.idEquipo + "\t" + EventoRed.escapar(cfg.nombre) + "\t" + cfg.puertoTcp
+                    + "\t" + EventoRed.escapar(valor(cfg.operador)) + "\t" + EventoRed.escapar(valor(cfg.rol)));
             pool.execute(new Runnable() { @Override public void run() { escribir(); } });
             pool.execute(new Runnable() { @Override public void run() { leer(); } });
         }
@@ -492,6 +601,19 @@ public final class RedEquipos {
                 return;
             }
             salida.offer(sello.sellar(plano));
+            if (!plano.isEmpty() && plano.charAt(0) == 'E') marcarEnviado();
+        }
+
+        void marcarEnviado() {
+            String id = idPar;
+            Par par = id == null ? null : pares.get(id);
+            if (par != null) par.ultEnviado = System.currentTimeMillis();
+        }
+
+        void marcarRecibido() {
+            String id = idPar;
+            Par par = id == null ? null : pares.get(id);
+            if (par != null) par.ultRecibido = System.currentTimeMillis();
         }
 
         void enviarResumen() {
@@ -533,7 +655,7 @@ public final class RedEquipos {
                     out.write('\n');
                     if (salida.isEmpty()) out.flush();
                 }
-            } catch (IOException | InterruptedException ignorada) {
+            } catch (IOException | InterruptedException | RuntimeException ignorada) {
             } finally {
                 cerrar();
             }
@@ -589,6 +711,9 @@ public final class RedEquipos {
                 case "R": if (saludado) alResumen(x); return saludado;
                 case "L": if (saludado) alLista(x); return saludado;
                 case "E": if (saludado) alEvento(x); return saludado;
+                case "D": if (saludado) alDato(x); return saludado;
+                case "K": if (saludado) alAcuse(x); return saludado;
+                case "S": if (saludado) alPerfil(x); return saludado;
                 default: return true; // «P» (sigo aquí) y lo desconocido
             }
         }
@@ -604,6 +729,10 @@ public final class RedEquipos {
                 if (previo != null) par = previo;
             }
             par.nombre = EventoRed.desescapar(x[3]);
+            if (x.length >= 7) {
+                par.operador = EventoRed.desescapar(x[5]);
+                par.rol = EventoRed.desescapar(x[6]);
+            }
             par.ultimaVez = System.currentTimeMillis();
             String ip = socket.getInetAddress() == null ? "" : socket.getInetAddress().getHostAddress();
             if (!ip.isEmpty()) par.ip = ip;
@@ -613,7 +742,56 @@ public final class RedEquipos {
             saludado = true;
             oyente.alCambiarEquipos();
             enviarResumen();
+            try {
+                oyente.alConectarEquipo(id);
+            } catch (RuntimeException ignorada) {
+            }
             return true;
+        }
+
+        private void alPerfil(String[] x) {
+            if (x.length < 3 || idPar == null) return;
+            Par par = pares.get(idPar);
+            if (par == null) return;
+            String op = EventoRed.desescapar(x[1]), rol = EventoRed.desescapar(x[2]);
+            boolean cambio = !op.equals(par.operador) || !rol.equals(par.rol);
+            par.operador = op;
+            par.rol = rol;
+            if (cambio) oyente.alCambiarEquipos();
+        }
+
+        private void alDato(String[] x) {
+            if (x.length < 5 || idPar == null) return;
+            String id = EventoRed.desescapar(x[1]);
+            byte[] datos = Base64Red.decodificar(x[4]);
+            boolean ok = false;
+            if (datos != null && !id.isEmpty()) {
+                try {
+                    ok = oyente.alDato(idPar, id, EventoRed.desescapar(x[2]), EventoRed.desescapar(x[3]), datos);
+                } catch (RuntimeException e) {
+                    ok = false;
+                }
+            }
+            if (ok) {
+                marcarRecibido();
+                Par par = pares.get(idPar);
+                if (par != null) par.recibidos.incrementAndGet();
+                oyente.alCambiarEquipos();
+            }
+            enviar("K\t" + EventoRed.escapar(id) + "\t" + (ok ? "1" : "0"));
+        }
+
+        private void alAcuse(String[] x) {
+            if (x.length < 3 || idPar == null) return;
+            boolean ok = "1".equals(x[2]);
+            if (ok) {
+                marcarEnviado();
+                oyente.alCambiarEquipos();
+            }
+            try {
+                oyente.alAcuse(idPar, EventoRed.desescapar(x[1]), ok);
+            } catch (RuntimeException ignorada) {
+            }
         }
 
         private void alResumen(String[] x) {
@@ -656,6 +834,7 @@ public final class RedEquipos {
             if (!registro.agregar(e)) return;
             Par par = idPar == null ? null : pares.get(idPar);
             if (par != null) par.recibidos.incrementAndGet();
+            marcarRecibido();
             enviarATodos("E\t" + e.codificar(), this);
             try {
                 oyente.alEventoRemoto(e);
