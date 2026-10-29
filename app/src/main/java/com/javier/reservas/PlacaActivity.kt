@@ -69,6 +69,10 @@ import kotlin.math.min
  *  - INTERIOR: registra el ingreso, toma la foto e imprime el ticket.
  *
  * Cómo lee (varias técnicas a la vez, de la más barata a la más pesada):
+ *  0. MOTOR DE IA (v1.5): un detector de placas (YOLOv9) la encuentra y un lector especializado entrega la probabilidad de
+ *     cada letra o número. Se obliga el formato colombiano (AAA000 carro, AAA00A moto) y se compara con el listado de
+ *     reservas: la G no se confunde con 6, y por el formato se sabe si es carro o moto. Si la IA no ve placa, entra el
+ *     respaldo de abajo (ML Kit).
  *  1. ZONA DE LECTURA fija (recuadro punteado): el foco y la luz se miden ahí y se lee solo lo que cae adentro.
  *  2. Un detector liviano busca la placa por color y forma en toda la imagen. Si la ve, se lee solo ese recorte, ampliado.
  *  3. Si no se logra leer, cada cuadro prueba una versión distinta de la imagen (más contraste, blanco y negro,
@@ -116,6 +120,20 @@ class PlacaActivity : AppCompatActivity() {
         private const val PESO_EXACTA = 0.9f
         private const val PESO_CORREGIDA = 1.3f
         private const val PESO_ALERTA = 1.8f
+        /** Motor de IA: placa del listado elegida con poca seguridad (puntaje entre −1 y −3): se pide el doble de evidencia. */
+        private const val PESO_IA_DUDA = 1.8f
+
+        /** Motor de IA: tiempo mínimo entre lecturas cuando no hay una placa a la vista. */
+        private const val IA_CADA_ESPERA = 200L
+        private const val IA_CADA_AHORRO = 1_200L
+        /** Si la IA no ve placa, el respaldo (ML Kit) trabaja como mucho a este ritmo. */
+        private const val RESPALDO_CADA = 450L
+        private const val IA_OMITIDO = 0
+        private const val IA_SIN_PLACA = 1
+        private const val IA_ASINCRONO = 2
+        /** Método AUTO con IA: se busca en todo el ancho y en la parte central del cuadro. */
+        private const val AUTO_Y0 = 0.12f
+        private const val AUTO_Y1 = 0.82f
 
         private val ZOOMS = floatArrayOf(1f, 1.5f, 2f, 3f)
         private val FOCOS = intArrayOf(0, 70, 120, 200, 400)
@@ -139,6 +157,18 @@ class PlacaActivity : AppCompatActivity() {
     private class Cand(val texto: String, val caja: Rect?)
     private class Hallazgo(val lec: OcrPlaca.Lectura, val caja: Rect?)
 
+    /** Lo que leyó el motor de IA en un cuadro: probabilidades por posición, dónde estaba la placa y cuán nítida salió. */
+    private class LecturaIA(
+        val logp: Array<FloatArray>,
+        val caja: Rect,                 // placa en el cuadro derecho
+        val confianza: Float,           // seguridad del detector
+        val nitidez: Float,
+        val recorte: IntArray,          // imagen de la placa (ARGB), para la miniatura
+        val rw: Int,
+        val rh: Int,
+        val ms: Int                     // lo que tardó la IA en este cuadro
+    )
+
     private lateinit var vista: PreviewView
     private lateinit var zonaView: View
     private lateinit var marco: View
@@ -151,6 +181,7 @@ class PlacaActivity : AppCompatActivity() {
     private lateinit var avisoTitulo: TextView
     private lateinit var avisoPlaca: TextView
     private lateinit var avisoDetalle: TextView
+    private lateinit var opMotor: TextView
     private lateinit var opMetodo: TextView
     private lateinit var opZoom: TextView
     private lateinit var opFoco: TextView
@@ -171,6 +202,17 @@ class PlacaActivity : AppCompatActivity() {
     private var focoCm = 0
     @Volatile private var movimiento = 1    // 0 normal, 1 rápido, 2 obturador manual
     private var altaRes = true
+    @Volatile private var motorIA = 0       // 0 IA con respaldo ML Kit, 1 solo IA, 2 solo ML Kit
+
+    // ---- motor de IA (detector de placas + lector con formato de placa colombiana)
+    @Volatile private var motor: MotorPlacas? = null
+    @Volatile private var motorEstado = 0   // 0 cargando, 1 listo, 2 no disponible
+    private val acum = AcumuladorPlacas(2_500L)
+    private var ultimoIA = 0L
+    private var ultimoRespaldo = 0L
+    private var iaFallos = 0
+    private var iaMs = 0f
+    private var ultimoTextoMotor = 0L
 
     // ---- exposición manual (solo con movimiento = 2)
     private var manualPosible = false
@@ -235,6 +277,7 @@ class PlacaActivity : AppCompatActivity() {
         avisoTitulo = findViewById(R.id.avisoTitulo)
         avisoPlaca = findViewById(R.id.avisoPlaca)
         avisoDetalle = findViewById(R.id.avisoDetalle)
+        opMotor = findViewById(R.id.opMotor)
         opMetodo = findViewById(R.id.opMetodo)
         opZoom = findViewById(R.id.opZoom)
         opFoco = findViewById(R.id.opFoco)
@@ -248,7 +291,9 @@ class PlacaActivity : AppCompatActivity() {
         focoCm = aj.focoPlacaCm
         movimiento = aj.movimientoPlaca
         altaRes = aj.altaResolucion
+        motorIA = aj.motorPlaca
         refrescarOpciones()
+        cargarMotor()
 
         val arriba = findViewById<View>(R.id.panelArriba)
         val abajo = findViewById<View>(R.id.panelAbajo)
@@ -280,6 +325,22 @@ class PlacaActivity : AppCompatActivity() {
             enfocarZona()
         }
 
+        opMotor.setOnClickListener {
+            motorIA = (motorIA + 1) % 3
+            Operacion.ajustes.motorPlaca = motorIA
+            reiniciarLectura()
+            refrescarOpciones()
+            if (motorIA != 2 && motorEstado == 2) {
+                Toast.makeText(this, "La IA no está disponible en este equipo: se lee con ML Kit.", Toast.LENGTH_LONG).show()
+            }
+            mostrarEstado(
+                when (motorIA) {
+                    0 -> "IA + respaldo: lee con inteligencia artificial y, si no ve la placa, prueba con ML Kit"
+                    1 -> "Solo IA: lee con el modelo de placas (formato AAA000 carro, AAA00A moto)"
+                    else -> "Solo ML Kit: el lector de texto de la versión anterior"
+                }, true
+            )
+        }
         opMetodo.setOnClickListener {
             metodo = (metodo + 1) % 3
             Operacion.ajustes.metodoPlaca = metodo
@@ -348,8 +409,51 @@ class PlacaActivity : AppCompatActivity() {
         super.onDestroy()
         brillo(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
         main.removeCallbacksAndMessages(null)
+        // El motor de IA se cierra en el mismo hilo que lo usa, después del cuadro que esté procesando
+        val m = motor
+        motor = null
+        motorEstado = 2
+        hilo.execute {
+            try {
+                m?.close()
+            } catch (_: Throwable) {
+            }
+        }
         hilo.shutdown()
         reconocedor.close()
+    }
+
+    // ---------------------------------------------------------------- motor de IA
+
+    /** Carga los dos modelos (detector y lector) en un hilo aparte: tarda un instante y no debe frenar la cámara. */
+    private fun cargarMotor() {
+        Thread {
+            try {
+                val det = assets.open("placas/detector.onnx").use { it.readBytes() }
+                val lec = assets.open("placas/lector.onnx").use { it.readBytes() }
+                val m = MotorPlacas(EjecutorOrt(det, lec))
+                // Primera pasada en vacío: así el primer cuadro real no se demora
+                val gris = IntArray(256 * 256) { 0xFF727272.toInt() }
+                m.detectar(gris, 256, 256)
+                m.leer(IntArray(128 * 64) { 0xFF727272.toInt() }, 128, 64)
+                if (isDestroyed) {
+                    m.close()
+                    return@Thread
+                }
+                motor = m
+                motorEstado = 1
+                main.post {
+                    refrescarOpciones()
+                    if (motorIA != 2) mostrarEstado("IA lista · ponga la placa dentro del recuadro", true)
+                }
+            } catch (e: Throwable) {
+                motorEstado = 2
+                main.post {
+                    refrescarOpciones()
+                    mostrarEstado("La IA no se pudo cargar (${e.javaClass.simpleName}): se lee con ML Kit", true)
+                }
+            }
+        }.start()
     }
 
     // ---------------------------------------------------------------- cámara
@@ -536,6 +640,7 @@ class PlacaActivity : AppCompatActivity() {
 
     private fun reiniciarLectura() {
         voto.limpiar()
+        acum.limpiar()
         sinLecturaSeguidas = 0
         fallos = 0
         fallosDet = 0
@@ -589,6 +694,26 @@ class PlacaActivity : AppCompatActivity() {
         val forzada = t < lecturaCompletaHasta
         val metodoAct = if (forzada) 2 else metodo
         contador++
+
+        // 0) Motor de IA: detector de placas + lector que obliga el formato AAA000 / AAA00A
+        if (motorIA != 2 && motorEstado == 1) {
+            when (procesarConIA(proxy, t, ancho, alto, rot, uw, uh, metodoAct, forzada)) {
+                IA_ASINCRONO -> return true
+                IA_SIN_PLACA -> {
+                    // La IA no vio placa: solo con «IA + respaldo» entra ML Kit, y de vez en cuando
+                    if (motorIA == 1 || t - ultimoRespaldo < RESPALDO_CADA) {
+                        sinPlaca(t)
+                        return false
+                    }
+                    ultimoRespaldo = t
+                }
+                else -> {
+                    // Todavía no toca leer (ahorro de energía)
+                    sinPlaca(t)
+                    return false
+                }
+            }
+        }
 
         // 1) Detector de placa por color y forma (solo en automático)
         var det: DetectorPlaca.Resultado? = null
@@ -716,6 +841,222 @@ class PlacaActivity : AppCompatActivity() {
             .addOnSuccessListener { texto -> alTexto(texto, proxy, pase) }
             .addOnCompleteListener { proxy.close() }
         return true
+    }
+
+    // ---------------------------------------------------------------- lectura con IA
+
+    /** Dónde busca el detector de placas, en píxeles del cuadro derecho. */
+    private fun regionIA(metodoAct: Int, uw: Int, uh: Int): Rect = when (metodoAct) {
+        1 -> zonaFija(uw, uh)
+        2 -> Rect(0, 0, uw, uh)
+        else -> Rect(0, (uh * AUTO_Y0).toInt(), uw, (uh * AUTO_Y1).toInt())
+    }
+
+    /**
+     * Un cuadro con el motor de IA (hilo de análisis): detecta la placa, la recorta a color y el lector devuelve las
+     * probabilidades de cada símbolo. La decisión se toma después, en el hilo principal.
+     * @return IA_ASINCRONO si hay una placa (el cuadro se cierra al terminar de decidir), IA_SIN_PLACA si no se vio ninguna,
+     *         IA_OMITIDO si todavía no tocaba leer
+     */
+    private fun procesarConIA(
+        proxy: ImageProxy, t: Long, ancho: Int, alto: Int, rot: Int, uw: Int, uh: Int, metodoAct: Int, forzada: Boolean
+    ): Int {
+        val m = motor ?: return IA_OMITIDO
+        val cada = when (energia) {
+            Energia.ACTIVO -> 0L
+            Energia.ESPERA -> IA_CADA_ESPERA
+            Energia.AHORRO -> IA_CADA_AHORRO
+        }
+        if (!forzada && t - ultimoIA < cada) return IA_OMITIDO
+        ultimoIA = t
+        try {
+            val p = proxy.planes
+            // 1) Imagen de la zona donde se busca, reducida a un tamaño que le sirva al detector
+            val reg = regionIA(metodoAct, uw, uh)
+            val paso = max(1, max(reg.width(), reg.height()) / MotorPlacas.TAM_DET)
+            val tam = DetectorPlaca.tamanoRecorte(reg.left, reg.top, reg.right, reg.bottom, paso)
+            val img = MotorPlacas.recortarArgb(
+                p[0].buffer, p[1].buffer, p[2].buffer, p[0].rowStride, p[1].rowStride, p[1].pixelStride,
+                ancho, alto, rot, reg.left, reg.top, reg.right, reg.bottom, paso
+            )
+            val dets = m.detectar(img, tam[0], tam[1])
+            iaFallos = 0
+            val mejor = dets.firstOrNull() ?: return IA_SIN_PLACA
+
+            // 2) La placa en el cuadro derecho y su recorte a tamaño completo, con un margen para no cortar letras
+            val caja = Rect(
+                reg.left + mejor.x1 * paso, reg.top + mejor.y1 * paso,
+                reg.left + mejor.x2 * paso, reg.top + mejor.y2 * paso
+            )
+            val mx = (caja.width() * 0.08f).toInt()
+            val my = (caja.height() * 0.08f).toInt()
+            val pr = Rect(max(0, caja.left - mx), max(0, caja.top - my), min(uw, caja.right + mx), min(uh, caja.bottom + my))
+            if (pr.width() < 16 || pr.height() < 8) return IA_SIN_PLACA
+            val pasoP = max(1, pr.width() / 256)
+            val tp = DetectorPlaca.tamanoRecorte(pr.left, pr.top, pr.right, pr.bottom, pasoP)
+            val recorte = MotorPlacas.recortarArgb(
+                p[0].buffer, p[1].buffer, p[2].buffer, p[0].rowStride, p[1].rowStride, p[1].pixelStride,
+                ancho, alto, rot, pr.left, pr.top, pr.right, pr.bottom, pasoP
+            )
+
+            // 3) El lector: probabilidad de cada letra o número en cada posición
+            val logp = m.leer(recorte, tp[0], tp[1]) ?: return IA_SIN_PLACA
+            val nit = ImagenPlaca.nitidez(ImagenPlaca.gris(recorte), tp[0], tp[1])
+            val ms = (SystemClock.elapsedRealtime() - t).toInt()
+            val lectura = LecturaIA(logp, caja, mejor.confianza, nit, recorte, tp[0], tp[1], ms)
+            main.post {
+                try {
+                    alIA(lectura, proxy)
+                } catch (_: Exception) {
+                } finally {
+                    proxy.close()
+                }
+            }
+            return IA_ASINCRONO
+        } catch (e: Throwable) {
+            // Si la IA falla varias veces seguidas se desactiva y se sigue con ML Kit
+            iaFallos++
+            if (iaFallos >= 3) {
+                motorEstado = 2
+                main.post {
+                    refrescarOpciones()
+                    mostrarEstado("La IA falló (${e.javaClass.simpleName}): se lee con ML Kit", true)
+                }
+            }
+            return IA_SIN_PLACA
+        }
+    }
+
+    /** Miniatura de lo que está leyendo la IA (el recorte de la placa). */
+    private fun miniaturaIA(l: LecturaIA): Bitmap {
+        val bmp = Bitmap.createBitmap(l.recorte, l.rw, l.rh, Bitmap.Config.ARGB_8888)
+        val mw = 192
+        return Bitmap.createScaledBitmap(bmp, mw, max(1, (l.rh * (mw.toFloat() / l.rw)).toInt()), true)
+    }
+
+    /** Hilo principal: llega la lectura de un cuadro. Se suma a las anteriores y se decide. */
+    private fun alIA(lec: LecturaIA, proxy: ImageProxy) {
+        val l = Operacion.listado ?: return
+        val ahora = SystemClock.elapsedRealtime()
+        val calidad = (lec.nitidez * 1.5f).coerceIn(0.3f, 1.3f)
+        val util = acum.agregar(lec.logp, calidad, ahora)
+        mostrar(lec.caja)
+        // Velocidad de la IA en este equipo (promedio), en el botón del motor
+        iaMs = if (iaMs == 0f) lec.ms.toFloat() else iaMs * 0.8f + lec.ms * 0.2f
+        if (ahora - ultimoTextoMotor > 1_000L) {
+            ultimoTextoMotor = ahora
+            opMotor.text = "${textoMotor()} · ${iaMs.toInt()} ms"
+        }
+        if (util || lec.confianza >= 0.5f) {
+            ultimaPlacaVista = ahora
+            indicioHasta = ahora + 2_500L
+            if (energia != Energia.ACTIVO) {
+                val estaba = energia
+                energia = Energia.ACTIVO
+                if (estaba == Energia.AHORRO) salirAhorro()
+            }
+        }
+        if (ahora - ultimaMiniatura > 250L) {
+            ultimaMiniatura = ahora
+            try {
+                imgCrop.setImageBitmap(miniaturaIA(lec))
+            } catch (_: Exception) {
+            }
+        }
+        if (!util) {
+            mostrarEstado("Placa a la vista · acérquese o espere", false)
+            return
+        }
+        decidirIA(l, ahora, proxy)
+    }
+
+    /**
+     * Con lo visto en los últimos cuadros: la placa más probable según el formato y el listado de reservas.
+     * Si encaja con una reserva y hay evidencia suficiente, se registra.
+     */
+    private fun decidirIA(l: Listado, ahoraT: Long, proxy: ImageProxy) {
+        val prom = acum.promedio(ahoraT) ?: return
+        val r = DecisionPlaca.decidir(prom.logp, l.placasIndexadas()) ?: return
+        val libre = r.libre
+        val clase = if (libre.moto) "MOTO" else "CARRO"
+        val ahora = System.currentTimeMillis()
+        val listada: String? = r.listada
+        txtLeida.text = listada ?: libre.placa
+        ultimaPista = if (libre.moto) OcrPlaca.Tipo.MOTO else OcrPlaca.Tipo.CARRO
+
+        if (r.ambigua) {
+            mostrarEstado("$clase · ${libre.placa} se parece a varias placas. Acérquese un poco.", false)
+            return
+        }
+
+        var filas: List<Int> = emptyList()
+        var exacta = false
+        var necesario = PESO_EXACTA
+        if (listada != null) {
+            // Una placa del listado encaja casi tan bien como la mejor lectura posible
+            filas = l.buscarPlacaOcr(listada)
+            exacta = true
+            necesario = if (r.puntajeListada >= DecisionPlaca.SEGURA) PESO_EXACTA else PESO_IA_DUDA
+        } else if (libre.puntaje >= DecisionPlaca.LIBRE_MINIMO) {
+            // Ninguna encaja por probabilidad: se prueba la lectura con las confusiones típicas (O/Q/0, I/1…)
+            filas = l.buscarPlacaOcr(libre.placa)
+            exacta = l.placaExacta(libre.placa)
+            necesario = if (exacta) PESO_EXACTA else PESO_CORREGIDA
+        }
+
+        if (filas.isNotEmpty()) {
+            if (filas.size > 1 && !exacta) {
+                mostrarEstado("$clase · se parece a ${filas.size} placas. Acérquese un poco.", false)
+                return
+            }
+            val fila = filas.firstOrNull { !l.ingresado(it) } ?: filas[0]
+            val placa = l.placaNormal(fila)
+            ultimaLectura = placa
+            txtLeida.text = placa
+            val clave = OcrPlaca.canonica(placa)
+            if ((enfriamiento[clave] ?: 0L) > ahora) {
+                mostrarEstado("$placa ya fue procesada", false)
+                return
+            }
+            if (prom.peso < necesario) {
+                val porcentaje = (100f * prom.peso / necesario).toInt().coerceIn(1, 99)
+                mostrarEstado("$clase · confirmando $placa ($porcentaje%)", false)
+                return
+            }
+            enfriamiento[clave] = ahora + ENFRIAMIENTO_MS
+            acum.limpiar()
+            voto.limpiar()
+            // El tipo de vehículo sale del formato leído; solo se compara con la reserva si la lectura fue segura
+            val tipoVisto = if (libre.puntaje >= DecisionPlaca.SEGURA) ultimaPista else null
+            registrarDesdeCamara(fila, libre.placa, proxy, tipoVisto)
+            return
+        }
+
+        // Ninguna reserva coincide
+        ultimaLectura = libre.placa
+        mostrarEstado("$clase · ${libre.placa} no tiene reserva", false)
+        val clave = OcrPlaca.canonica(libre.placa)
+        // Solo con lectura segura y varios cuadros que coinciden: evita avisos por letreros o lecturas a medias
+        if (libre.puntaje >= DecisionPlaca.SEGURA && acum.coincidencias(libre.placa) >= 2 &&
+            prom.peso >= PESO_ALERTA && (enfriamiento[clave] ?: 0L) <= ahora
+        ) {
+            enfriamiento[clave] = ahora + ENFRIAMIENTO_MS
+            acum.limpiar()
+            avisarSinReserva(libre.placa, clase, proxy)
+        }
+    }
+
+    /** Placa que no está en el listado: guarda la alerta con foto y avisa. */
+    private fun avisarSinReserva(placa: String, clase: String, proxy: ImageProxy) {
+        val foto = tomarFoto(proxy)
+        Operacion.alertaSinReserva(Operacion.Origen.PLACA, placa, foto)
+        val via = Operacion.accionPara(Operacion.Origen.PLACA) == Operacion.Accion.VALIDAR
+        vibrar(longArrayOf(0, 400))
+        mostrarAviso(
+            Tipo.ALERTA, "SIN RESERVA", placa,
+            "$clase\n" + if (via) "No está en el listado. No debe pasar." else "Hay un vehículo adentro sin reserva.",
+            via
+        )
     }
 
     /** Zona fija de lectura (el recuadro punteado), en píxeles del cuadro derecho. */
@@ -919,15 +1260,7 @@ class PlacaActivity : AppCompatActivity() {
         if (c.exactas >= 2 && c.peso >= PESO_ALERTA && (c.placa.length == 6 || c.placa.length == 5) && (enfriamiento[clave] ?: 0L) <= ahora) {
             enfriamiento[clave] = ahora + ENFRIAMIENTO_MS
             voto.limpiar()
-            val foto = tomarFoto(proxy)
-            Operacion.alertaSinReserva(Operacion.Origen.PLACA, c.placa, foto)
-            val via = Operacion.accionPara(Operacion.Origen.PLACA) == Operacion.Accion.VALIDAR
-            vibrar(longArrayOf(0, 400))
-            mostrarAviso(
-                Tipo.ALERTA, "SIN RESERVA", c.placa,
-                "$clase\n" + if (via) "No está en el listado. No debe pasar." else "Hay un vehículo adentro sin reserva.",
-                via
-            )
+            avisarSinReserva(c.placa, clase, proxy)
         }
     }
 
@@ -1056,7 +1389,21 @@ class PlacaActivity : AppCompatActivity() {
 
     private fun textoDistancia(cm: Int): String = if (cm >= 100) "${cm / 100f} m".replace(".0", "").replace('.', ',') else "$cm cm"
 
+    private fun textoMotor(): String {
+        val estadoIA = when (motorEstado) {
+            0 -> " (cargando…)"
+            2 -> " (no disponible)"
+            else -> ""
+        }
+        return when (motorIA) {
+            0 -> "Motor: IA + ML Kit$estadoIA"
+            1 -> "Motor: solo IA$estadoIA"
+            else -> "Motor: solo ML Kit"
+        }
+    }
+
     private fun refrescarOpciones() {
+        opMotor.text = textoMotor()
         opMetodo.text = when (metodo) {
             0 -> "Lectura: AUTO"
             1 -> "Lectura: ZONA FIJA"

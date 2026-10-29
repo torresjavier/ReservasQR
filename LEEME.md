@@ -1,4 +1,4 @@
-# Reservas QR · v1.4
+# Reservas QR · v1.5
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
@@ -56,11 +56,35 @@ Si se olvida: **«Olvidé el PIN»** pide la clave de desbloqueo del equipo y de
 
 Colores: negro, rojo y blanco.
 
-## Leer placas con la cámara (v1.4)
+## Leer placas con la cámara
 
 Pensada para carros y motos de Colombia, **placas amarillas o blancas**, y para el vehículo **en movimiento** en la vía.
 
-### Cómo trabaja
+### Motor de IA (nuevo en v1.5)
+
+La lectura principal ahora usa inteligencia artificial que corre **dentro del equipo, sin internet**:
+
+1. **Detector de placas** (YOLOv9): encuentra dónde está la placa en la imagen, sea de carro o de moto, sin depender del color ni de la forma.
+2. **Lector de placas** (fast-plate-ocr): lee la placa recortada y, para cada una de las 10 posiciones, entrega la probabilidad de cada letra o número.
+3. **Formato obligatorio.** Carro `AAA000` (3 letras + 3 números) y moto `AAA00A` (3 letras + 2 números + 1 letra).
+   En las posiciones 1–3 solo pueden ser letras y en la 4–5 solo números, así que **una G nunca se confunde con 6, ni una O con 0**.
+   La última posición decide el tipo: si encaja mejor un número es **CARRO**, si encaja mejor una letra es **MOTO**
+   (funciona igual con placas de moto de un renglón o de dos).
+4. **Se compara con el listado de reservas.** De todas las placas del listado se elige la que más probabilidad tiene según el modelo.
+   Así se corrigen confusiones como Q/O o 8/B usando probabilidades reales y no una tabla fija. Si dos placas del listado se parecen
+   y el modelo no puede distinguirlas, la app **espera una lectura más clara** en vez de adivinar.
+5. **Varios cuadros se suman.** Con el vehículo en movimiento se promedian las probabilidades de los últimos 2,5 s: pesan más los cuadros nítidos
+   y los que el modelo vio con seguridad; un cuadro borroso casi no cuenta.
+6. **Respaldo.** Si la IA no ve ninguna placa en un cuadro, de vez en cuando entra el lector de la versión anterior (ML Kit).
+   Si la IA no se puede cargar o falla, la app sigue funcionando con ML Kit.
+
+Probado con fotos reales de una moto (LGU06F) y un carro (LQW954): las dos se leyeron perfectas, también con la imagen reducida, oscura,
+con ruido o algo borrosa; con listado de 1000 placas no hubo ninguna equivocación y una placa que no estaba en el listado nunca se confundió con otra.
+Con mucho movimiento (borroso fuerte) el modelo se equivoca igual que cualquier lector: por eso conviene usar **Movimiento RÁPIDO** y **Calidad ALTA**.
+
+En el botón **Motor** se ve cuánto tarda la IA por cuadro en este equipo (por ejemplo «Motor: IA + ML Kit · 120 ms»).
+
+### Cómo trabaja el respaldo (ML Kit)
 
 1. **Zona fija de lectura.** Hay un recuadro blanco punteado en la pantalla. El operador pone el Sunmi en un punto fijo (o lo apoya) y la placa debe pasar por ese recuadro.
    La cámara **enfoca y mide la luz una sola vez en ese punto** y se queda quieta: ya no «se vuelve loca» buscando foco a cada cuadro.
@@ -80,7 +104,8 @@ Pensada para carros y motos de Colombia, **placas amarillas o blancas**, y para 
 
 | Botón | Valores | Para qué sirve |
 |---|---|---|
-| **Lectura** | AUTO · ZONA FIJA · TODA LA IMAGEN | AUTO usa el detector y, si no encuentra, la zona fija. ZONA FIJA lee siempre el recuadro (la más estable para la vía). TODA LA IMAGEN para placas muy cerca o fuera del recuadro. |
+| **Motor** | IA + ML Kit · solo IA · solo ML Kit | IA + ML Kit es lo normal. «Solo IA» no usa el respaldo (más liviano). «Solo ML Kit» vuelve a la lectura de la versión 1.4. |
+| **Lectura** | AUTO · ZONA FIJA · TODA LA IMAGEN | Con la IA, AUTO busca la placa en todo el ancho y la parte central de la imagen, ZONA FIJA solo dentro del recuadro y TODA LA IMAGEN en todo el cuadro. Con ML Kit, AUTO usa el detector por color y, si no encuentra, la zona fija. ZONA FIJA lee siempre el recuadro (la más estable para la vía). TODA LA IMAGEN para placas muy cerca o fuera del recuadro. |
 | **Zoom** | 1x · 1,5x · 2x · 3x | Acerca la cámara. Úselo si la placa se ve pequeña en el recuadro. |
 | **Foco** | AUTO · fijo a 70 cm · 1,2 m · 2 m · 4 m | AUTO enfoca una vez en el recuadro. Con una distancia fija el lente no se mueve: elija la distancia a la que pasan las placas. Si el equipo no lo permite, queda en AUTO. |
 | **Movimiento** | NORMAL · RÁPIDO · MANUAL | RÁPIDO pide más cuadros por segundo y modo deporte (si el equipo lo tiene). MANUAL fija una exposición corta (menos borroso) y ajusta sola ISO/tiempo según la luz. |
@@ -124,6 +149,13 @@ Al menos debe existir el código o la placa. También reconoce títulos parecido
 ## Lector Sunmi
 
 Si un QR no llega a la app, en el Sunmi abra **Ajustes → Escáner** y active **Salida por broadcast**.
+
+## Componentes de terceros
+
+El detector y el lector de placas son modelos de código abierto (licencia MIT) de los proyectos
+[open-image-models](https://github.com/ankandrew/open-image-models) y [fast-plate-ocr](https://github.com/ankandrew/fast-plate-ocr),
+y se ejecutan con [ONNX Runtime](https://github.com/microsoft/onnxruntime) de Microsoft (MIT). Los modelos pesan unos 11 MB y están en
+`app/src/main/assets/placas/`. Los avisos de licencia están en `LICENCIAS_TERCEROS.txt`.
 
 ## Compilar
 

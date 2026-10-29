@@ -300,6 +300,11 @@ public final class Listado {
         return idxPlaca.containsKey(normPlaca(leida));
     }
 
+    /** Todas las placas del listado (sin espacios ni guiones): el motor de placas elige entre ellas la que mejor encaja. */
+    public java.util.Set<String> placasIndexadas() {
+        return java.util.Collections.unmodifiableSet(idxPlaca.keySet());
+    }
+
     /** Placa del listado, normalizada (sin espacios ni guiones). */
     public String placaNormal(int fila) {
         return normPlaca(valor(fila, Campo.PLACA));

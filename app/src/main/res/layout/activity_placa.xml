@@ -96,6 +96,10 @@
                 android:orientation="horizontal">
 
                 <TextView
+                    android:id="@+id/opMotor"
+                    style="@style/ChipOpcion" />
+
+                <TextView
                     android:id="@+id/opMetodo"
                     style="@style/ChipOpcion" />
 

@@ -167,6 +167,11 @@ class Ajustes(ctx: Context) {
         get() = p.getInt("metodoPlaca", 0).coerceIn(0, 2)
         set(v) = p.edit().putInt("metodoPlaca", v.coerceIn(0, 2)).apply()
 
+    /** Motor de lectura: 0 = IA con respaldo de ML Kit, 1 = solo IA, 2 = solo ML Kit (el de la versión 1.4). */
+    var motorPlaca: Int
+        get() = p.getInt("motorPlaca", 0).coerceIn(0, 2)
+        set(v) = p.edit().putInt("motorPlaca", v.coerceIn(0, 2)).apply()
+
     /** Zoom de la cámara de placas (1, 1,5, 2 o 3 veces). */
     var zoomPlaca: Float
         get() = p.getFloat("zoomPlaca", 1f).coerceIn(1f, 4f)
