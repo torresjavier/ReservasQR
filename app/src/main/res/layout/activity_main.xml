@@ -196,7 +196,7 @@
                     android:imeOptions="actionSearch"
                     android:importantForAutofill="no"
                     android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
-                    android:maxLength="20"
+                    android:maxLength="500"
                     android:paddingStart="52dp"
                     android:paddingEnd="52dp"
                     android:singleLine="true"

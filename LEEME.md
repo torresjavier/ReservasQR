@@ -1,4 +1,4 @@
-# Reservas QR · v1.5
+# Reservas QR · v1.6
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
@@ -149,6 +149,16 @@ Al menos debe existir el código o la placa. También reconoce títulos parecido
 ## Lector Sunmi
 
 Si un QR no llega a la app, en el Sunmi abra **Ajustes → Escáner** y active **Salida por broadcast**.
+
+**Cómo se recibe cada código (v1.6).** El lector puede mandar el código de dos formas a la vez: como un teclado que escribe letra por letra
+y como un aviso del sistema (broadcast) con el texto completo. Antes la app procesaba las dos por separado, y la copia por teclado podía quedar
+a medias, mezclarse con el cuadro de búsqueda o cerrar la ventana de resultado. Ahora:
+
+- Cada código se procesa **una sola vez y completo**. Si llega el aviso del sistema, ese texto manda y la copia por teclado se descarta; si solo llega por teclado, se espera una fracción de segundo (0,2 s) por si llega el aviso exacto.
+- Las teclas del lector **ya no llegan a los botones de la ventana** (el Enter del final cerraba el resultado) ni al cuadro de búsqueda: lo que alcanzó a entrar se borra.
+- El cuadro de búsqueda ya no corta a 20 letras: acepta hasta 500 (un QR largo llegaba cortado).
+- El aviso rojo («SIN RESERVA», «YA SE VALIDÓ») dura 5 s en vez de 3 s. Se cierra tocándolo.
+- Si el código trae letras especiales (ñ, tildes), conviene la salida **por broadcast**: el modo teclado no puede escribirlas.
 
 ## Componentes de terceros
 

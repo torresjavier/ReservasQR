@@ -123,10 +123,17 @@ class MainActivity : AppCompatActivity() {
     private var despuesDeRestablecer: (() -> Unit)? = null
     private val ocultarBanner = Runnable { banner.visibility = View.GONE }
     private var dialogoActual: AlertDialog? = null
-    private val bufferTeclas = StringBuilder()
-    private var ultimaTecla = 0L
-    private var ultimaLectura = ""
-    private var ultimaLecturaT = 0L
+    /** Junta lo que manda el lector Sunmi (teclado y aviso del sistema) para procesar cada código una sola vez y completo. */
+    private val captura = CapturaLector()
+    /** Lo que había en el cuadro de búsqueda antes de que el lector empezara a «escribir» en él. */
+    private var textoAntesDeLector: String? = null
+    /** Lectura completa que llegó por teclado, esperando un instante por si llega el aviso exacto del sistema. */
+    private var tecladoPendiente: String? = null
+    private val procesarTecladoPendiente = Runnable {
+        val t = tecladoPendiente ?: return@Runnable
+        tecladoPendiente = null
+        if (!Bloqueo.requiereClave && captura.aceptar(t, SystemClock.uptimeMillis())) procesarLectura(t.trim())
+    }
     private var uriPendiente: Uri? = null
     private var ayudaInicialMostrada = false
     /** El operador canceló la clave: se espera a que toque «Desbloquear». */
@@ -216,7 +223,7 @@ class MainActivity : AppCompatActivity() {
     private val receptorEscaner = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val datos = intent?.getStringExtra(EscanerSunmi.EXTRA_DATOS) ?: return
-            recibirLectura(datos)
+            alAvisoDelLector(datos)
         }
     }
 
@@ -417,45 +424,88 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ---------------------------------------------------------------- lector Sunmi (teclado / broadcast)
+    // ---------------------------------------------------------------- lector Sunmi (teclado / aviso del sistema)
 
     /**
-     * Lector Sunmi en modo «teclado»: escribe el código como teclas y termina con Enter.
-     * Cuando no hay un campo de texto activo, se juntan esas teclas y se procesan como un QR.
+     * El lector Sunmi puede entregar cada código de dos maneras a la vez: como «teclado» (letra por letra y Enter)
+     * y como aviso del sistema con el texto completo. [CapturaLector] las junta para que cada código se procese
+     * una sola vez y completo; aquí solo se traducen las teclas de Android.
+     *
+     * Las teclas del lector se atienden también cuando hay una ventana abierta (ver [atenderLector]): si no, el Enter
+     * del final le llega a la ventana y la cierra, y las letras sueltas se pierden.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (currentFocus is EditText || Bloqueo.requiereClave) return super.dispatchKeyEvent(event)
-        val ahora = System.currentTimeMillis()
-        if (event.keyCode == KeyEvent.KEYCODE_ENTER || event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
-            if (event.action == KeyEvent.ACTION_UP && bufferTeclas.length >= 3) {
-                val t = bufferTeclas.toString()
-                bufferTeclas.setLength(0)
-                recibirLectura(t)
-                return true
-            }
-            if (bufferTeclas.isNotEmpty()) return true
-            return super.dispatchKeyEvent(event)
-        }
-        val ch = event.unicodeChar
-        if (ch > 0 && !Character.isISOControl(ch)) {
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                if (ahora - ultimaTecla > 400) bufferTeclas.setLength(0)
-                bufferTeclas.appendCodePoint(ch)
-                ultimaTecla = ahora
-            }
-            return true
-        }
+        if (Bloqueo.requiereClave) return super.dispatchKeyEvent(event)
+        if (tratarTeclaLector(event, currentFocus is EditText)) return true
         return super.dispatchKeyEvent(event)
     }
 
-    private fun recibirLectura(datos: String) {
+    /** @return true si la tecla es del lector y ya se atendió (no debe llegar al campo de texto ni a los botones). */
+    private fun tratarTeclaLector(event: KeyEvent, enCampo: Boolean): Boolean {
+        val t = event.eventTime
+        val tecla = event.keyCode
+        if (tecla == KeyEvent.KEYCODE_ENTER || tecla == KeyEvent.KEYCODE_NUMPAD_ENTER || tecla == KeyEvent.KEYCODE_TAB) {
+            val fin = captura.terminador(event.action == KeyEvent.ACTION_DOWN, t, enCampo)
+            val texto = fin.texto
+            if (texto != null) {
+                textoAntesDeLector = null
+                alTecladoCompleto(texto)
+            }
+            return fin.absorber
+        }
+        var ch = event.unicodeChar
+        if (ch < 0) ch = ch and 0x7FFFFFFF
+        if (ch <= 0 || Character.isISOControl(ch)) return false
+        if (event.action == KeyEvent.ACTION_UP) return captura.absorberSoltar(t, enCampo)
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        return when (captura.caracter(ch, t, enCampo)) {
+            CapturaLector.PASAR -> {
+                // Todavía parece escritura a mano: pasa al campo, pero se guarda cómo estaba por si resulta ser el lector
+                if (captura.largo() == 1) textoAntesDeLector = (currentFocus as? EditText)?.text?.toString()
+                false
+            }
+            CapturaLector.ABSORBER_Y_LIMPIAR -> {
+                quitarLecturaDelCampo()
+                true
+            }
+            else -> true
+        }
+    }
+
+    /** Deja el cuadro de búsqueda como estaba antes de que el lector le metiera las primeras letras del código. */
+    private fun quitarLecturaDelCampo() {
+        val antes = textoAntesDeLector ?: return
+        textoAntesDeLector = null
+        val campo = currentFocus as? EditText ?: return
+        campo.setText(antes)
+        campo.setSelection(campo.text.length)
+    }
+
+    /** Hace que una ventana (diálogo) también deje pasar las teclas del lector en vez de reaccionar a ellas. */
+    private fun AlertDialog.atenderLector(): AlertDialog {
+        setOnKeyListener { _, _, ev -> !Bloqueo.requiereClave && tratarTeclaLector(ev, false) }
+        return this
+    }
+
+    /** Código completo escrito por el lector como teclado: se espera un instante por si llega el aviso exacto del sistema. */
+    private fun alTecladoCompleto(texto: String) {
+        tecladoPendiente = texto
+        handler.removeCallbacks(procesarTecladoPendiente)
+        handler.postDelayed(procesarTecladoPendiente, CapturaLector.ESPERA_TECLADO_MS)
+    }
+
+    /** Aviso del sistema: trae el texto completo y exacto, así que manda sobre la copia por teclado. */
+    private fun alAvisoDelLector(datos: String) {
         if (Bloqueo.requiereClave) return
-        val t = datos.trim()
+        val ahora = SystemClock.uptimeMillis()
+        handler.removeCallbacks(procesarTecladoPendiente)
+        tecladoPendiente = null
+        if (captura.hayTeclasRecientes(ahora)) quitarLecturaDelCampo()
+        if (captura.alAviso(datos, ahora)) procesarLectura(datos.trim())
+    }
+
+    private fun procesarLectura(t: String) {
         if (t.isEmpty()) return
-        val ahora = System.currentTimeMillis()
-        if (t == ultimaLectura && ahora - ultimaLecturaT < 1500) return // llega duplicado por broadcast y teclado
-        ultimaLectura = t
-        ultimaLecturaT = ahora
         val enBuscador = edtPlaca.text?.toString().orEmpty()
         if (enBuscador.contains(t)) edtPlaca.setText(enBuscador.replace(t, "").trim())
         if (listado == null) {
@@ -658,7 +708,7 @@ class MainActivity : AppCompatActivity() {
         bannerDetalle.visibility = if (detalle.isBlank()) View.GONE else View.VISIBLE
         banner.visibility = View.VISIBLE
         handler.removeCallbacks(ocultarBanner)
-        handler.postDelayed(ocultarBanner, if (estilo == Estilo.ERROR) 3_000L else 1_600L)
+        handler.postDelayed(ocultarBanner, if (estilo == Estilo.ERROR) 5_000L else 1_600L)
     }
 
     private fun accion(texto: String, f: (AlertDialog, TextView) -> Unit): Pair<String, (AlertDialog, TextView) -> Unit> = texto to f
@@ -793,7 +843,7 @@ class MainActivity : AppCompatActivity() {
 
         bSec.text = secundario.first
         bPri.text = principal.first
-        val d = MaterialAlertDialogBuilder(this).setView(v).create()
+        val d = MaterialAlertDialogBuilder(this).setView(v).create().atenderLector()
         bSec.setOnClickListener { secundario.second(d, tImpresion) }
         bPri.setOnClickListener { principal.second(d, tImpresion) }
         dialogoActual?.dismiss()
@@ -1662,6 +1712,8 @@ class MainActivity : AppCompatActivity() {
             .setTitle(titulo)
             .setMessage(mensaje)
             .setPositiveButton("Entendido", null)
+            .create()
+            .atenderLector()
             .show()
     }
 
