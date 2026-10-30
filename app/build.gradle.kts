@@ -12,8 +12,8 @@ android {
         // Android 7.0 o superior (los equipos Sunmi V2 / P2 traen Android 7.1 u 11)
         minSdk = 24
         targetSdk = 35
-        versionCode = 12
-        versionName = "2.1"
+        versionCode = 14
+        versionName = "2.3"
         // Solo equipos reales (ARM de 64 y 32 bits, como los Sunmi): el APK pesa menos sin las librerías del emulador
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -65,4 +65,6 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     // Saber cuándo la app pasa a segundo plano (para pedir la clave del equipo)
     implementation("androidx.lifecycle:lifecycle-process:2.8.7")
+    // Gráficas de la pantalla de estadísticas: MPAndroidChart (Apache 2.0)
+    implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
 }

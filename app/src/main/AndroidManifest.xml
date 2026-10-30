@@ -6,8 +6,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- Radio (walkie-talkie): el micrófono solo se usa mientras se mantiene pulsado el botón -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- Bluetooth: para hacer visible el equipo y recibir el Excel -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
@@ -25,7 +23,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 
     <!-- Servicio de la impresora interna Sunmi -->
@@ -85,6 +82,18 @@
         <!-- Cámara para leer placas con OCR -->
         <activity
             android:name=".PlacaActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!-- Registros de la jornada con la foto de cada uno (de todos los equipos) -->
+        <activity
+            android:name=".RegistrosActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!-- Estadísticas de la jornada con gráficas -->
+        <activity
+            android:name=".EstadisticasActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
 

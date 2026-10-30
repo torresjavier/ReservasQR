@@ -148,6 +148,7 @@ object Operacion {
         info.clear()
         infoVal.clear()
         dirFotos.listFiles()?.forEach { it.delete() }
+        RedLocal.fotosReiniciar()
         reaplicarEquipos()
         guardar()
         avisar()
@@ -321,7 +322,7 @@ object Operacion {
         c.validacion?.let { hora ->
             l.validaciones[fila] = hora
             val o = c.origenValidacion
-            infoVal[fila] = InfoIngreso(o?.id() ?: UUID.randomUUID().toString(), PREFIJO_EQUIPO + o?.equipo.orEmpty(), "", null)
+            infoVal[fila] = InfoIngreso(o?.id() ?: UUID.randomUUID().toString(), PREFIJO_EQUIPO + o?.equipo.orEmpty(), "", fotoYaRecibida(FotosRed.VALIDACION, hora, o))
         }
         if (c.quitarIngreso) {
             l.ingresos.remove(fila)
@@ -330,7 +331,7 @@ object Operacion {
         c.ingreso?.let { hora ->
             l.ingresos[fila] = hora
             val o = c.origenIngreso
-            info[fila] = InfoIngreso(o?.id() ?: UUID.randomUUID().toString(), PREFIJO_EQUIPO + o?.equipo.orEmpty(), "", null)
+            info[fila] = InfoIngreso(o?.id() ?: UUID.randomUUID().toString(), PREFIJO_EQUIPO + o?.equipo.orEmpty(), "", fotoYaRecibida(FotosRed.INGRESO, hora, o))
         }
         return true
     }
@@ -400,6 +401,7 @@ object Operacion {
         infoVal[fila] = InfoIngreso(id, origen.api, placaLeida.orEmpty(), archivoFoto)
         guardar()
         RedLocal.publicar(EventoRed.VALIDACION, fila, ahora)
+        if (archivoFoto != null) RedLocal.fotosCambio()
         if (ajustes.enviarAlValidar) {
             val e = nuevoEvento("VALIDACION", fila, "VALIDADA", momento)
             e.put("id_validacion", id)
@@ -426,6 +428,7 @@ object Operacion {
         info[fila] = InfoIngreso(id, origen.api, placaLeida.orEmpty(), archivoFoto)
         guardar()
         RedLocal.publicar(EventoRed.INGRESO, fila, ahora)
+        if (archivoFoto != null) RedLocal.fotosCambio()
         val e = nuevoEvento("INGRESO", fila, "INGRESADA", "INTERIOR")
         e.put("id_ingreso", id)
         e.put("fecha_ingreso", iso(ahora))
@@ -619,6 +622,7 @@ object Operacion {
         }
         guardar()
         RedLocal.alBorrar(a.redCorte)
+        RedLocal.fotosReiniciar()
         avisar()
     }
 
@@ -631,12 +635,139 @@ object Operacion {
         info.clear()
         infoVal.clear()
         dirFotos.listFiles()?.forEach { it.delete() }
+        RedLocal.fotosReiniciar()
         guardar()
         avisar()
     }
 
     fun foto(fila: Int): File? =
         (info[fila]?.foto ?: infoVal[fila]?.foto)?.let { File(app.filesDir, it) }?.takeIf { it.exists() }
+
+    // ---------------------------------------------------------------- fotos que se reparten entre los equipos
+
+    /** Una foto de un registro de hoy que se puede mandar a los otros equipos. */
+    class FotoCompartible(val clave: String, val tipo: String, val hora: Long, val codigo: String, val placa: String, val archivo: File)
+
+    /** Fotos de las validaciones e ingresos de hoy que este equipo tiene (las suyas y las que le llegaron). Hilo principal. */
+    fun fotosCompartibles(): List<FotoCompartible> {
+        val l = listado ?: return emptyList()
+        val hoy = EventoRed.jornadaDe(System.currentTimeMillis())
+        val r = ArrayList<FotoCompartible>()
+        fun agregar(tipo: String, fila: Int, hora: Long?, i: InfoIngreso) {
+            if (hora == null || fila >= l.filas.size || i.foto == null) return
+            if (EventoRed.jornadaDe(hora) != hoy) return
+            val f = File(app.filesDir, i.foto)
+            if (!f.exists() || f.length() == 0L) return
+            val codigo = l.valor(fila, Listado.Campo.CODIGO)
+            val placa = l.placaNormal(fila)
+            if (codigo.isBlank() && placa.isBlank()) return
+            r.add(FotoCompartible(FotosRed.clave(tipo, hora, codigo, placa), tipo, hora, codigo, placa, f))
+        }
+        for ((fila, i) in info) agregar(FotosRed.INGRESO, fila, l.ingresos[fila], i)
+        for ((fila, i) in infoVal) agregar(FotosRed.VALIDACION, fila, l.validaciones[fila], i)
+        r.sortBy { -it.hora }   // primero las más recientes
+        return r
+    }
+
+    /** La foto de este evento ya estaba guardada (llegó antes que el aviso del registro): su archivo, o null. */
+    private fun fotoYaRecibida(tipo: String, hora: Long, o: EventoRed?): String? {
+        if (o == null) return null
+        val rel = FotosRed.nombre(tipo, hora, o.codigo, o.placa)
+        return rel.takeIf { File(app.filesDir, it).let { f -> f.exists() && f.length() > 0L } }
+    }
+
+    /**
+     * Llegó por el Wi-Fi la foto de un registro de otro equipo. Se guarda y, si el registro ya se conoce, se le une.
+     * Si el aviso del registro llega después, [aplicarFila] la encuentra por su nombre.
+     * @return true si quedó guardada (o ya estaba, o no sirve y no vale la pena repetirla); false si falló y conviene reintentar
+     */
+    fun recibirFoto(meta: String, datos: ByteArray): Boolean {
+        val m = FotosRed.leerMeta(meta) ?: return true
+        if (!FotosRed.pareceImagen(datos)) return true
+        val unida = try {
+            enPrincipal {
+                val rel = m.nombre()
+                val f = File(app.filesDir, rel)
+                if (!f.exists() || f.length() == 0L) {
+                    f.parentFile?.mkdirs()
+                    val tmp = File(f.path + ".tmp")
+                    tmp.writeBytes(datos)
+                    if (!tmp.renameTo(f)) { f.writeBytes(datos); tmp.delete() }
+                }
+                val l = listado
+                var cambio = false
+                if (l != null) {
+                    val fila = l.buscarFila(m.codigo, m.placa)
+                    if (fila >= 0) {
+                        val mapa = if (m.tipo == FotosRed.INGRESO) info else infoVal
+                        val hora = if (m.tipo == FotosRed.INGRESO) l.ingresos[fila] else l.validaciones[fila]
+                        val actual = mapa[fila]
+                        if (actual != null && hora == m.hora && (actual.foto == null || !File(app.filesDir, actual.foto).exists())) {
+                            mapa[fila] = actual.copy(foto = rel)
+                            cambio = true
+                        }
+                    }
+                }
+                if (cambio) {
+                    guardar()
+                    avisar()
+                }
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+        return unida
+    }
+
+    /** Un registro (validación en la vía o ingreso) para la pantalla de registros. */
+    class Registro(
+        val fila: Int,
+        val tipo: String,
+        val hora: Long,
+        val placa: String,
+        val nombre: String,
+        val quien: String,
+        val placaLeida: String,
+        val foto: File?
+    )
+
+    /**
+     * Las cuentas de la jornada para la pantalla de estadísticas (gráficas): estados, horas, esperas, equipos, alertas.
+     * Null si todavía no hay un listado cargado.
+     */
+    fun estadisticas(ctx: Context): Estadisticas.Resultado? {
+        val l = listado ?: return null
+        val yo = ajustes.nombreEquipo.ifBlank { "este equipo" }
+        val regs = ArrayList<Estadisticas.Reg>(l.ingresos.size + l.validaciones.size)
+        for ((fila, t) in l.ingresos) regs.add(Estadisticas.Reg(FotosRed.INGRESO, fila, t, equipoDe(info[fila]) ?: yo))
+        for ((fila, t) in l.validaciones) regs.add(Estadisticas.Reg(FotosRed.VALIDACION, fila, t, equipoDe(infoVal[fila]) ?: yo))
+        val motivos = Alertas.todas(ctx).map { it.motivo }
+        return Estadisticas.calcular(l, regs, motivos, System.currentTimeMillis(), java.util.TimeZone.getDefault())
+    }
+
+    /** Todas las validaciones e ingresos de este equipo (propios y llegados de otros equipos), del más reciente al más viejo. */
+    fun registros(): List<Registro> {
+        val l = listado ?: return emptyList()
+        val r = ArrayList<Registro>()
+        fun agregar(tipo: String, fila: Int, hora: Long, i: InfoIngreso?) {
+            if (fila >= l.filas.size) return
+            val f = i?.foto?.let { File(app.filesDir, it) }?.takeIf { it.exists() }
+            r.add(
+                Registro(
+                    fila, tipo, hora,
+                    l.valor(fila, Listado.Campo.PLACA).uppercase(),
+                    l.valor(fila, Listado.Campo.NOMBRE).ifBlank { l.titulo(fila) },
+                    equipoDe(i) ?: ajustes.nombreEquipo.ifBlank { "este equipo" },
+                    i?.placaLeida.orEmpty(), f
+                )
+            )
+        }
+        for ((fila, t) in l.ingresos) agregar(FotosRed.INGRESO, fila, t, info[fila])
+        for ((fila, t) in l.validaciones) agregar(FotosRed.VALIDACION, fila, t, infoVal[fila])
+        r.sortByDescending { it.hora }
+        return r
+    }
 
     // ---------------------------------------------------------------- alertas (intentos de colarse)
 

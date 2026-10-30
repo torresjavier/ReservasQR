@@ -312,21 +312,6 @@ class Ajustes(ctx: Context) {
     /** Este equipo es, ahora mismo, uno de los administradores: es el que sube los registros y descarga las reservas. */
     val esSatelite: Boolean get() = RedLocal.soyAdmin(this)
 
-    /** Radio (pulsar para hablar) encendida en este equipo. */
-    var radioActiva: Boolean
-        get() = p.getBoolean("radioActiva", true)
-        set(v) = guardar("radioActiva", v)
-
-    /** Dirección del servidor de radio por internet (vacía = solo por el Wi-Fi). Si está vacía se usa la dirección de envío del servidor. */
-    var urlRadio: String
-        get() = texto("urlRadio", "")
-        set(v) = guardar("urlRadio", v.trim())
-
-    /** Canal de la radio: solo se oyen los equipos del mismo canal. */
-    var radioCanal: String
-        get() = texto("radioCanal", "general").ifBlank { "general" }
-        set(v) = guardar("radioCanal", v.trim().lowercase().replace(Regex("[^a-z0-9_-]"), "").take(24).ifBlank { "general" })
-
     /** Sonar un pitido cuando se lee una reserva (si no se encuentra o hay algo raro, el equipo vibra). */
     var sonidoAlLeer: Boolean
         get() = p.getBoolean("sonidoAlLeer", true)

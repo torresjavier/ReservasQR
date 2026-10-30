@@ -1,7 +1,37 @@
-# Reservas QR · v2.1
+# Reservas QR · v2.3
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
+
+## Novedades de la v2.3
+
+### 1. Las fotos de la cámara ahora se ven, y viajan por el Wi-Fi a todos los equipos
+Antes la foto que tomaba la cámara al registrar una placa quedaba guardada pero **no se mostraba en ninguna parte**. Ahora:
+
+- **En la lista de reservas** cada fila trae su **miniatura** (la del ingreso, o la de la vía si todavía no ingresa). Un toque la muestra completa.
+- **Menú → «Registros con foto»**: una pantalla con todas las validaciones y todos los ingresos, del más reciente al más viejo, con su foto, la placa, el nombre, quién lo registró y la hora. Filtros: *Todos · Con foto · Ingresos · Vía*.
+- **Se reparten por el Wi-Fi entre equipos**, sin servidor ni internet: cuando un equipo registra con foto, los demás la reciben y la ven en su lista y en «Registros con foto». Si un equipo estaba apagado o fuera de la red, **las recibe al volver a conectarse** (solo las que le faltan, sin repetir).
+- Las fotos que viajan se **reducen** (máx. 800 px) para que sean livianas. Se borran con «Borrar todos los ingresos» / «Fin del evento», igual que los registros.
+- Para que las fotos de otros equipos lleguen, **«Red entre equipos» debe estar activa** (Ajustes) y los equipos en el mismo Wi-Fi.
+
+### 2. Estadísticas con gráficas
+**Menú → «Estadísticas (gráficas)»** (librería **MPAndroidChart**). Se actualiza sola y cuenta lo de todos los equipos:
+
+- Fichas: reservas, ingresaron (y %), pendientes, **espera media y máxima entre la vía y el ingreso**, ingresos de la última hora.
+- **Estado de las reservas** (ingresaron / validadas en la vía sin ingresar / sin llegar).
+- **Validaciones e ingresos por hora** del día.
+- **Carros y motos** (por la forma de la placa) y **VIP vs normales** que ingresaron.
+- **Registros por equipo** (quién registra más), **ingresos por evento** (si el Excel trae varios eventos) y **alertas por motivo**.
+
+### 3. Se quitó la radio
+
+La radio (walkie-talkie) ya no existe en la app: no hay botón «RADIO», ni pantalla de radio, ni sección en Ajustes, ni permiso de micrófono.
+La red entre equipos sigue haciendo todo lo demás (reservas, registros, fotos, administradores y receptores). El `server.js` vuelve a ser el de antes de la radio.
+Los archivos `Radio.kt`, `RadioActivity.kt`, `RadioUi.kt`, `Voz.java` y `HistorialVoz.java` quedaron vacíos a propósito (para que la actualización no se rompa si
+no se borran); se pueden borrar del repositorio.
+
+### 4. Icono de la app (Redparking)
+El logo de Redparking no se pudo bajar de la página (el entorno de trabajo no puede entrar a `redparking.co`). **Mientras tanto la app conserva su icono actual.** Cuando se tenga el archivo del logo (PNG, idealmente cuadrado y de 512 px o más), se generan todos los tamaños del icono de la app.
 
 ## La operación en DOS MOMENTOS
 
@@ -217,7 +247,7 @@ Tampoco se usa «Nearby/Google», porque necesita los servicios de Google Play y
 2. Entre cada par de equipos queda una conexión abierta (TCP). Cada validación, ingreso o anulación viaja por ahí al instante, **cifrada** (AES-256-GCM) con la **clave de la red**.
 3. Un equipo que recibe un aviso lo reenvía a los demás, así que también llega a los que no alcanzan al equipo que lo originó.
 4. Cada 30 s, y al conectarse, los equipos comparan lo que saben y se pasan lo que le falte al otro. Un equipo que estuvo apagado o sin señal **se pone al día solo**.
-5. Los avisos de validación e ingreso llevan datos mínimos (código de reserva, placa, hora, nombre del equipo y operador). Desde la v1.8 también viajan la tabla de reservas (a todos) y los registros pendientes con su foto (hacia un administrador). Desde la 2.1 también viaja la voz de la radio (ver «Administradores y receptores» y «Radio» más abajo).
+5. Los avisos de validación e ingreso llevan datos mínimos (código de reserva, placa, hora, nombre del equipo y operador). Desde la v1.8 también viajan la tabla de reservas (a todos) y los registros pendientes con su foto (hacia un administrador). Desde la 2.1 los administradores también reparten entre sí lo pendiente (ver «Administradores y receptores» más abajo).
 6. Lo que llega de otro equipo **no se vuelve a enviar al servidor** como aviso: lo envía el equipo que lo originó, o un administrador si ese equipo es receptor (así no se duplica: el servidor descarta lo repetido).
 
 Funciona **en segundo plano**: la app deja un servicio activo con un aviso fijo («Reservas QR · VÍA 1 · 2 equipos conectados»). Android obliga a mostrar ese aviso.
@@ -299,24 +329,6 @@ Lista desplegable con **cada equipo de la red, por nombre del operario y del equ
 
 Se refresca sola cada 4 segundos. Tocar el indicador «● n equipos conectados» de la pantalla principal abre una lista rápida.
 
-## Radio · walkie-talkie (v2.1)
-
-Un botón **«🎙 RADIO»** flota en el borde derecho de la pantalla principal y de la pantalla de placas. **Mantenga pulsado para hablar** y suelte para escuchar:
-
-- **Rojo «● HABLANDO»** mientras transmite; todos los equipos del mismo canal lo oyen.
-- **Verde «🔊 nombre»** cuando oye a otro equipo (muestra quién habla).
-- Gris «🎙 RADIO» en reposo. Mientras uno habla no oye a los demás (como un walkie-talkie real).
-- La primera vez pide permiso para el **micrófono** (solo se usa mientras el botón está pulsado). Máximo 60 segundos seguidos.
-
-**Por dónde viaja la voz** (dos caminos a la vez; si llega por los dos suena una sola vez):
-
-1. **Por el Wi-Fi**, directo a los equipos conectados (la misma red entre equipos): retraso de menos de un segundo, sin gastar datos.
-2. **Por internet**, a través del servidor, para equipos que estén lejos o en 4G. Hay que escribir la dirección en **Ajustes → RADIO → «Radio por internet»** (por ejemplo `https://mi-servidor.com/api/radio`). Si se deja vacía y la dirección de envío termina en `/api/registros`, se usa la misma cambiando el final por `/api/radio`. El servidor de ejemplo (`servidor/server.js`) ya la incluye.
-
-**Canales:** en Ajustes → RADIO se puede poner un canal (por ejemplo `via` o `interior`); solo se oyen los equipos del mismo canal. Por omisión es `general`.
-
-Notas: la voz es «en vivo», si se corta la señal no se repite lo perdido. Ocupa unos 8 KB por segundo hablando. Se puede apagar en Ajustes (el botón desaparece).
-
 ## Sonido y vibración al leer (v1.8)
 
 - **Lectura buena** (QR o placa): suena **un pitido corto**, para que el operario de la vía sepa que se leyó sin mirar la pantalla.
@@ -345,7 +357,10 @@ a medias, mezclarse con el cuadro de búsqueda o cerrar la ventana de resultado.
 El detector y el lector de placas son modelos de código abierto (licencia MIT) de los proyectos
 [open-image-models](https://github.com/ankandrew/open-image-models) y [fast-plate-ocr](https://github.com/ankandrew/fast-plate-ocr),
 y se ejecutan con [ONNX Runtime](https://github.com/microsoft/onnxruntime) de Microsoft (MIT). Los modelos pesan unos 11 MB y están en
-`app/src/main/assets/placas/`. Los avisos de licencia están en `LICENCIAS_TERCEROS.txt`.
+`app/src/main/assets/placas/`.
+
+Las gráficas usan [MPAndroidChart](https://github.com/PhilJay/MPAndroidChart) (Apache 2.0), que se baja de JitPack al compilar.
+Los avisos de licencia están en `LICENCIAS_TERCEROS.txt`.
 
 ## Compilar
 

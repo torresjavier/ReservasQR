@@ -51,13 +51,14 @@ class ServicioRed : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (!Operacion.ajustes.redActiva) {
+        val a = Operacion.ajustes
+        if (!a.redActiva) {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
         tomarCerrojos()
-        RedLocal.arrancar()
+        RedLocal.arrancar()   // si la red entre equipos está apagada, no hace nada
         return START_STICKY
     }
 
@@ -124,7 +125,7 @@ class ServicioRed : Service() {
             this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        ultimoTexto = RedLocal.resumen()
+        ultimoTexto = textoNotificacion()
         return NotificationCompat.Builder(this, CANAL)
             .setSmallIcon(R.drawable.ic_red)
             .setContentTitle("Reservas QR · " + Operacion.ajustes.nombreEquipo)
@@ -137,8 +138,11 @@ class ServicioRed : Service() {
             .build()
     }
 
+    /** Lo que dice la notificación fija: cómo va la red entre equipos. */
+    private fun textoNotificacion(): String = RedLocal.resumen()
+
     private fun actualizarNotificacion() {
-        if (RedLocal.resumen() == ultimoTexto) return
+        if (textoNotificacion() == ultimoTexto) return
         try {
             getSystemService(NotificationManager::class.java)?.notify(ID_NOTIFICACION, notificacion())
         } catch (_: Exception) {

@@ -264,7 +264,6 @@ class PlacaActivity : AppCompatActivity() {
         setContentView(R.layout.activity_placa)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         Operacion.iniciar(this)
-        radioEnlace = RadioUi.adjuntar(this)
 
         vista = findViewById(R.id.vistaCamara)
         zonaView = findViewById(R.id.zonaLectura)
@@ -400,16 +399,8 @@ class PlacaActivity : AppCompatActivity() {
         }
     }
 
-    private lateinit var radioEnlace: RadioUi.Enlace
-
-    override fun onPause() {
-        super.onPause()
-        radioEnlace.pausar()
-    }
-
     override fun onResume() {
         super.onResume()
-        radioEnlace.reanudar()
         // Si la app estuvo bloqueada, se vuelve a la pantalla principal que pide la clave
         if (Bloqueo.requiereClave) finish()
     }

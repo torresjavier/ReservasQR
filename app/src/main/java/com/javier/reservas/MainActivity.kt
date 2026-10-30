@@ -249,7 +249,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         Operacion.iniciar(this)
         Bloqueo.instalar()
-        radioEnlace = RadioUi.adjuntar(this)
 
         header = findViewById(R.id.header)
         avatar = findViewById(R.id.avatar)
@@ -361,11 +360,8 @@ class MainActivity : AppCompatActivity() {
         manejarIntent(intent)
     }
 
-    private lateinit var radioEnlace: RadioUi.Enlace
-
     override fun onResume() {
         super.onResume()
-        radioEnlace.reanudar()
         Impresora.conectar(this)
         EscanerSunmi.conectar(this)
         try {
@@ -398,7 +394,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        radioEnlace.pausar()
         try {
             unregisterReceiver(receptorEscaner)
         } catch (_: Exception) {
@@ -957,6 +952,12 @@ class MainActivity : AppCompatActivity() {
         item(R.drawable.ic_impresora, "Imprimir ticket de prueba", if (Impresora.esSunmi) "Impresora Sunmi lista" else "Sin impresora Sunmi") {
             enviarAImpresora(Operacion.lineasPrueba(), null)
         }
+        item(R.drawable.ic_camara, "Registros con foto", "Validaciones e ingresos de todos los equipos, con la foto que tomó la cámara") {
+            startActivity(Intent(this, RegistrosActivity::class.java))
+        }
+        item(R.drawable.ic_grafica, "Estadísticas (gráficas)", "Ingresos por hora, esperas, carros y motos, equipos, alertas") {
+            startActivity(Intent(this, EstadisticasActivity::class.java))
+        }
         val nAlertas = Alertas.cantidad(this)
         item(R.drawable.ic_candado, "Alertas de la jornada", if (nAlertas > 0) "$nAlertas alertas: intentos de colarse, repetidos, sin reserva" else "Sin alertas por ahora") { mostrarAlertas() }
         item(R.drawable.ic_ajustes, "Ajustes (PIN)", "Operación vía / interior, ticket, servidor") { mostrarAjustes() }
@@ -1458,9 +1459,6 @@ class MainActivity : AppCompatActivity() {
         val redClave = v.findViewById<EditText>(R.id.ajRedClave)
         val redIps = v.findViewById<EditText>(R.id.ajRedIps)
         val sonido = v.findViewById<MaterialSwitch>(R.id.ajSonidoLeer)
-        val radioActiva = v.findViewById<MaterialSwitch>(R.id.ajRadioActiva)
-        val urlRadio = v.findViewById<EditText>(R.id.ajUrlRadio)
-        val radioCanal = v.findViewById<EditText>(R.id.ajRadioCanal)
         val satelite = v.findViewById<Spinner>(R.id.ajSatelite)
 
         satelite.adapter = adaptadorSpinner(ROLES_SATELITE.map { it.second })
@@ -1493,9 +1491,6 @@ class MainActivity : AppCompatActivity() {
         redClave.setText(ajustes.redClave)
         redIps.setText(ajustes.redIps)
         sonido.isChecked = ajustes.sonidoAlLeer
-        radioActiva.isChecked = ajustes.radioActiva
-        urlRadio.setText(ajustes.urlRadio)
-        radioCanal.setText(ajustes.radioCanal)
         val cierraEquipos = prepararListaEquipos(v)
         val cierraBorrado = prepararBorrado(v)
         v.findViewById<View>(R.id.ajRedBateria).setOnClickListener { permitirSegundoPlano() }
@@ -1546,9 +1541,6 @@ class MainActivity : AppCompatActivity() {
             ajustes.redClave = redClave.text.toString()
             ajustes.redIps = redIps.text.toString()
             ajustes.sonidoAlLeer = sonido.isChecked
-            ajustes.radioActiva = radioActiva.isChecked
-            ajustes.urlRadio = urlRadio.text.toString()
-            ajustes.radioCanal = radioCanal.text.toString()
             ajustes.satelite = ROLES_SATELITE[satelite.selectedItemPosition.coerceIn(0, ROLES_SATELITE.size - 1)].first
             if (!ajustes.puedeAdministrar) {
                 Toast.makeText(
@@ -1559,9 +1551,7 @@ class MainActivity : AppCompatActivity() {
                 ).show()
             }
             RedLocal.aplicarAjustes(this)
-            Radio.aplicarAjustes()
             Sincronizacion.programar(this)
-            radioEnlace.reanudar()
             refrescar()
         }
         v.findViewById<Button>(R.id.ajPrueba).setOnClickListener { guardarCampos(); enviarAImpresora(Operacion.lineasPrueba(), null) }

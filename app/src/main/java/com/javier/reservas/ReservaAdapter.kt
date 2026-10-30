@@ -65,7 +65,15 @@ class ReservaAdapter(
                 h.hora.setTextColor(ctx.getColor(R.color.rojo))
             }
         }
-        h.foto.visibility = if ((Operacion.info[f]?.foto ?: Operacion.infoVal[f]?.foto) != null) View.VISIBLE else View.GONE
+        // La foto del registro (la del ingreso, o la de la vía si no hay): miniatura; un toque la agranda
+        val archivoFoto = Operacion.foto(f)
+        h.foto.visibility = if (archivoFoto != null) View.VISIBLE else View.GONE
+        Fotos.cargar(h.foto, archivoFoto, 200)
+        if (archivoFoto != null) {
+            h.foto.setOnClickListener { Fotos.ver(ctx, archivoFoto, l.valor(f, Listado.Campo.PLACA).uppercase().ifBlank { l.titulo(f) }) }
+        } else {
+            h.foto.setOnClickListener(null)
+        }
 
         h.nombre.text = l.valor(f, Listado.Campo.NOMBRE).ifBlank { l.titulo(f) }
         val partes = listOf(

@@ -4,8 +4,6 @@
 //   GET  /api/registros   → ver los registros recibidos (?tipo=ALERTA|VALIDACION|INGRESO|ANULACION)
 //   GET  /api/reservas    → la app descarga reservas nuevas o cambiadas, con su estado (?desde=fecha)
 //   POST /api/reservas    ← usted (u otro sistema) agrega o actualiza reservas sin Excel
-//   POST /api/radio      ← la radio (walkie-talkie) de la app sube trozos de voz de un canal
-//   GET  /api/radio      → la app recoge los trozos nuevos del canal (espera hasta 8 s si no hay: «long polling»)
 //   GET  /fotos/<archivo> → foto de un ingreso
 //   GET  /                → página sencilla para ver los últimos ingresos
 //
@@ -190,52 +188,6 @@ small{color:#9b9b9b}.placa{background:#fff;color:#000;padding:2px 8px;border-rad
 
 // ---------------------------------------------------------------- rutas
 
-// ---------------------------------------------------------------- radio (walkie-talkie)
-// La voz no se guarda en disco: solo se retiene unos segundos en memoria para repartirla a los equipos que la piden.
-
-const RADIO_RETENER_MS = 30 * 1000;
-const radio = new Map(); // canal -> { n, items: [{ n, t, p }], esperando: [fn] }
-
-function canalRadio(nombre) {
-  const c = seguro(nombre).slice(0, 24) || "general";
-  if (!radio.has(c)) radio.set(c, { n: 0, items: [], esperando: [] });
-  return radio.get(c);
-}
-
-async function recibirRadio(req, res, url) {
-  const cuerpo = JSON.parse(await leerCuerpo(req));
-  const c = canalRadio(cuerpo.canal || url.searchParams.get("canal"));
-  const paquetes = Array.isArray(cuerpo.paquetes) ? cuerpo.paquetes : [];
-  const t = Date.now();
-  for (const p of paquetes) {
-    if (typeof p !== "string" || p.length > 20000) continue;
-    c.items.push({ n: ++c.n, t, p });
-  }
-  while (c.items.length && t - c.items[0].t > RADIO_RETENER_MS) c.items.shift();
-  const quienes = c.esperando.splice(0);
-  for (const despertar of quienes) despertar();
-  responder(res, 200, { ok: true, hasta: c.n });
-}
-
-function entregarRadio(url, res) {
-  const c = canalRadio(url.searchParams.get("canal"));
-  const desde = Number(url.searchParams.get("desde"));
-  if (!Number.isFinite(desde) || desde < 0) return responder(res, 200, { hasta: c.n, paquetes: [] }); // primera vez: no se repite lo viejo
-  const responderYa = () => {
-    const nuevos = c.items.filter((i) => i.n > desde);
-    responder(res, 200, { hasta: c.n, paquetes: nuevos.map((i) => ({ n: i.n, p: i.p })) });
-  };
-  if (c.n > desde) return responderYa();
-  const aviso = () => { clearTimeout(reloj); responderYa(); };
-  const reloj = setTimeout(() => {
-    const i = c.esperando.indexOf(aviso);
-    if (i >= 0) c.esperando.splice(i, 1);
-    responderYa();
-  }, 8000);
-  c.esperando.push(aviso);
-  res.on("close", () => { clearTimeout(reloj); const i = c.esperando.indexOf(aviso); if (i >= 0) c.esperando.splice(i, 1); });
-}
-
 http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
@@ -247,8 +199,6 @@ http.createServer(async (req, res) => {
       const todos = leer(ARCH_REG, []);
       return responder(res, 200, { registros: tipo ? todos.filter((x) => x.tipo_evento === tipo) : todos });
     }
-    if (req.method === "POST" && r === "/api/radio") return await recibirRadio(req, res, url);
-    if (req.method === "GET" && r === "/api/radio") return entregarRadio(url, res);
     if (req.method === "GET" && r === "/api/reservas") return entregarReservas(url, res);
     if (req.method === "POST" && r === "/api/reservas") return await agregarReservas(req, res);
     if (req.method === "GET" && r.startsWith("/fotos/")) {

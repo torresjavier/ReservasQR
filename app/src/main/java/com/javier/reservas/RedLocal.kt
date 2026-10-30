@@ -79,6 +79,7 @@ object RedLocal : RedEquipos.Oyente {
             if (!Operacion.ajustes.redActiva) return
             hilo.execute {
                 empujarBandeja()
+                empujarFotos(null)
                 try {
                     val ctx = Operacion.app
                     val ahora = System.currentTimeMillis()
@@ -90,19 +91,6 @@ object RedLocal : RedEquipos.Oyente {
                 }
             }
             main.postDelayed(this, CADA_REVISION_MS)
-        }
-    }
-
-    // ---------------------------------------------------------------- voz (radio)
-
-    private val hiloVoz = Executors.newSingleThreadExecutor { r -> Thread(r, "red-voz").apply { isDaemon = true } }
-
-    /** Manda un trozo de voz a todos los equipos conectados (sin esperar acuse: si se pierde uno, se pierde un instante de audio). */
-    fun difundirVoz(idDato: String, nombre: String, bytes: ByteArray) {
-        hiloVoz.execute {
-            val r = red ?: return@execute
-            if (!r.activa()) return@execute
-            for (e in r.equipos()) if (e.conectado) r.enviarDato(e.id, idDato, "VOZ", nombre, bytes)
         }
     }
 
@@ -223,6 +211,7 @@ object RedLocal : RedEquipos.Oyente {
         intentos.clear()
         tablaPendiente.clear()
         tablaEnviada.clear()
+        envios.vaciar()
     }
 
     /** Apaga la red entre equipos. Lo que haga este equipo mientras tanto no se anota. */
@@ -240,8 +229,17 @@ object RedLocal : RedEquipos.Oyente {
 
     /** Aplica los Ajustes: arranca o detiene el servicio en segundo plano y el motor. */
     fun aplicarAjustes(ctx: Context) {
-        if (Operacion.ajustes.redActiva) {
+        val a = Operacion.ajustes
+        // El servicio en segundo plano mantiene viva la red entre equipos con la pantalla apagada
+        if (a.redActiva) {
             iniciarServicio(ctx)
+        } else {
+            try {
+                ctx.stopService(Intent(ctx, ServicioRed::class.java))
+            } catch (_: Exception) {
+            }
+        }
+        if (a.redActiva) {
             arrancar()
             // Cambió el operario o el papel de este equipo: se avisa ya y se retoma lo pendiente con el nuevo papel.
             hilo.execute {
@@ -250,24 +248,21 @@ object RedLocal : RedEquipos.Oyente {
                 enviarTablaYa(false, null)
             }
         } else {
-            try {
-                ctx.stopService(Intent(ctx, ServicioRed::class.java))
-            } catch (_: Exception) {
-            }
             detener()
         }
     }
 
     /**
-     * Pide el servicio que mantiene la red viva en segundo plano. Si el sistema no lo permite, la red igual funciona
+     * Pide el servicio que mantiene la red viva en segundo plano. Si el sistema no lo permite, igual funciona
      * mientras la app esté abierta.
      */
     fun iniciarServicio(ctx: Context) {
-        if (!Operacion.ajustes.redActiva) return
+        val a = Operacion.ajustes
+        if (!a.redActiva) return
         try {
             ContextCompat.startForegroundService(ctx, Intent(ctx, ServicioRed::class.java))
         } catch (_: Exception) {
-            arrancar()
+            if (a.redActiva) arrancar()
         }
     }
 
@@ -362,6 +357,7 @@ object RedLocal : RedEquipos.Oyente {
         hilo.execute {
             empujarBandeja()
             enviarTablaYa(false, idEquipo)
+            empujarFotos(idEquipo)
         }
     }
 
@@ -369,7 +365,7 @@ object RedLocal : RedEquipos.Oyente {
         "EVT" -> recibirRegistro(id, meta, datos)
         "TAB" -> recibirTrozoDeTabla(idEquipo, meta, datos)
         "SUBIDO" -> recibirSubidos(datos)
-        "VOZ" -> Radio.recibirDeRed(meta, datos)
+        "FOTO" -> recibirFotoDeEquipo(idEquipo, meta, datos)
         "PIDE" -> {
             // Otro equipo pide la tabla de reservas ahora mismo: cualquiera que la tenga se la manda
             hilo.execute { enviarTablaYa(true, idEquipo) }
@@ -401,8 +397,12 @@ object RedLocal : RedEquipos.Oyente {
     }
 
     override fun alAcuse(idEquipo: String, id: String, entregado: Boolean) {
-        // Voz, réplicas entre administradores y avisos de «ya subido» no llevan seguimiento
-        if (id.startsWith("VOZ-") || id.startsWith(PREFIJO_REPLICA) || id.startsWith("SUB-")) return
+        // Réplicas entre administradores y avisos de «ya subido» no llevan seguimiento
+        if (id.startsWith(PREFIJO_REPLICA) || id.startsWith("SUB-")) return
+        if (id.startsWith(PREFIJO_FOTO)) {
+            hilo.execute { acuseDeFoto(idEquipo, id.removePrefix(PREFIJO_FOTO), entregado) }
+            return
+        }
         hilo.execute {
             if (id.startsWith("TAB-")) {
                 acuseDeTabla(idEquipo, id, entregado)
@@ -613,6 +613,102 @@ object RedLocal : RedEquipos.Oyente {
             val r = red ?: return@execute
             for (otro in administradores()) r.enviarDato(otro.id, PREFIJO_REPLICA + id, "EVT", momento, datos)
         }
+    }
+
+    // ---- fotos de los registros
+
+    private const val PREFIJO_FOTO = "FOT-"
+    /** Cuántas fotos se mandan a cada equipo sin esperar la confirmación de la anterior. */
+    private const val VENTANA_FOTOS = 3
+    private const val ARCHIVO_ACUSES_FOTOS = "fotos_acuse.tsv"
+
+    private val envios = FotosRed.Envios()
+    private var acusesFotos: FotosRed.Acuses? = null
+
+    @Synchronized
+    private fun acuses(): FotosRed.Acuses {
+        acusesFotos?.let { return it }
+        val a = try {
+            val f = File(Operacion.app.filesDir, ARCHIVO_ACUSES_FOTOS)
+            if (f.exists()) FotosRed.Acuses.cargar(f.readText()) else FotosRed.Acuses()
+        } catch (_: Exception) {
+            FotosRed.Acuses()
+        }
+        // Solo importa lo de los últimos días: lo demás ya no se reparte
+        a.podar(System.currentTimeMillis() - 3L * 24 * 3_600_000L)
+        acusesFotos = a
+        return a
+    }
+
+    private fun guardarAcusesFotos() {
+        try {
+            val f = File(Operacion.app.filesDir, ARCHIVO_ACUSES_FOTOS)
+            val tmp = File(f.path + ".tmp")
+            tmp.writeText(acuses().guardar())
+            if (!tmp.renameTo(f)) { f.writeText(acuses().guardar()); tmp.delete() }
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Este equipo tiene una foto nueva (la tomó o le llegó de otro equipo): se reparte a los que no la tienen. */
+    fun fotosCambio() {
+        if (Operacion.ajustes.redActiva) hilo.execute { empujarFotos(null) }
+    }
+
+    /** Se borró todo: ya no hay nada que repartir ni que recordar. */
+    fun fotosReiniciar() {
+        hilo.execute {
+            envios.vaciar()
+            acuses().vaciar()
+            try { File(Operacion.app.filesDir, ARCHIVO_ACUSES_FOTOS).delete() } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * Manda a los equipos conectados (o solo a [solo]) las fotos de hoy que todavía no tienen, de a pocas y esperando que
+     * cada una se confirme. Lo que recibe un equipo también se lo pasa a los demás (por si no se ven entre sí).
+     */
+    private fun empujarFotos(solo: String?) {
+        val a = Operacion.ajustes
+        val r = red ?: return
+        if (!a.redActiva || !r.activa()) return
+        val destinos = r.equipos().filter { it.conectado && (solo == null || it.id == solo) }
+        if (destinos.isEmpty()) return
+        val catalogo = try { Operacion.enPrincipal { Operacion.fotosCompartibles() } } catch (_: Exception) { return }
+        if (catalogo.isEmpty()) return
+        val ya = acuses()
+        val ahora = System.currentTimeMillis()
+        for (d in destinos) {
+            for (f in catalogo) {
+                if (ya.tiene(d.id, f.clave)) continue
+                if (!envios.puedeEnviar(d.id, f.clave, ahora, VENTANA_FOTOS, ACUSE_MS, RECHAZO_MS)) {
+                    if (envios.enCamino(d.id, ahora, ACUSE_MS) >= VENTANA_FOTOS) break   // este equipo ya tiene su cupo
+                    continue
+                }
+                val bytes = Fotos.paraRed(f.archivo) ?: continue
+                if (r.enviarDato(d.id, PREFIJO_FOTO + f.clave, "FOTO", FotosRed.meta(f.tipo, f.hora, f.codigo, f.placa), bytes)) {
+                    envios.enviada(d.id, f.clave, ahora)
+                }
+            }
+        }
+    }
+
+    private fun acuseDeFoto(idEquipo: String, clave: String, entregado: Boolean) {
+        envios.respondida(idEquipo, clave, entregado, System.currentTimeMillis())
+        if (entregado && acuses().agregar(idEquipo, clave)) guardarAcusesFotos()
+        empujarFotos(idEquipo)
+    }
+
+    /** Llegó la foto de un registro de otro equipo. */
+    private fun recibirFotoDeEquipo(idEquipo: String, meta: String, datos: ByteArray): Boolean {
+        val m = FotosRed.leerMeta(meta) ?: return true
+        val ok = Operacion.recibirFoto(meta, datos)
+        if (ok) {
+            // Quien la mandó ya la tiene: no se le devuelve
+            if (acuses().agregar(idEquipo, m.clave())) hilo.execute { guardarAcusesFotos() }
+            fotosCambio()   // se la pasa a los demás equipos
+        }
+        return ok
     }
 
     // ---- tabla de reservas

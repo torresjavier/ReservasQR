@@ -13,6 +13,18 @@
     android:orientation="horizontal"
     android:padding="12dp">
 
+    <!-- Foto que tomó la cámara al registrar (se ve aunque la haya tomado otro equipo). Un toque la agranda. -->
+    <ImageView
+        android:id="@+id/itFoto"
+        android:layout_width="68dp"
+        android:layout_height="68dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/marco_foto"
+        android:clipToOutline="true"
+        android:contentDescription="Foto del registro"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -91,15 +103,5 @@
             android:textAlignment="viewEnd"
             android:textSize="13sp"
             android:textStyle="bold" />
-
-        <ImageView
-            android:id="@+id/itFoto"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:layout_marginTop="6dp"
-            android:contentDescription="Tiene foto"
-            android:src="@drawable/ic_camara"
-            android:visibility="gone"
-            app:tint="@color/texto_suave" />
     </LinearLayout>
 </LinearLayout>

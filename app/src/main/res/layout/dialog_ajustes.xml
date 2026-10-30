@@ -462,53 +462,6 @@
         <TextView
             style="@style/TituloSeccion"
             android:layout_marginTop="18dp"
-            android:text="RADIO · WALKIE-TALKIE" />
-
-        <com.google.android.material.materialswitch.MaterialSwitch
-            android:id="@+id/ajRadioActiva"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Radio encendida (botón «RADIO» en la pantalla)" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Mantenga pulsado el botón para hablar: se pone rojo y todos los equipos del mismo canal lo oyen (se pone verde con el nombre de quien habla). Por el Wi-Fi funciona sola; para equipos lejanos o con 4G escriba la dirección del servidor de radio."
-            android:textColor="@color/texto_suave"
-            android:textSize="12sp" />
-
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:hint="Radio por internet (opcional)"
-            app:helperText="Ej: https://mi-servidor.com/api/radio. Vacía = se toma la de envío (…/api/registros → …/api/radio)">
-
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/ajUrlRadio"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="textUri" />
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:hint="Canal de la radio"
-            app:helperText="Solo se oyen los equipos del mismo canal (letras y números). Predeterminado: general">
-
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/ajRadioCanal"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="text"
-                android:maxLength="24" />
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <TextView
-            style="@style/TituloSeccion"
-            android:layout_marginTop="18dp"
             android:text="FIN DEL EVENTO · BORRAR DATOS" />
 
         <TextView

@@ -11,6 +11,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Solo para la librería de gráficas (MPAndroidChart); nada más se busca ahí
+        maven("https://jitpack.io") {
+            content { includeGroup("com.github.PhilJay") }
+        }
     }
 }
 
