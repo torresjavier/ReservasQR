@@ -82,7 +82,7 @@
             android:id="@+id/ajExigirValidacion"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Adentro: no dar ingreso a quien no pasó por la vía" />
+            android:text="Bloquear adentro a quien no pasó por la vía (no recomendado: normalmente adentro se valida y registra)" />
 
         <com.google.android.material.materialswitch.MaterialSwitch
             android:id="@+id/ajEnviarAlertas"
@@ -239,7 +239,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Papel de este equipo con el servidor"
+            android:text="Papel de este equipo (administrador o receptor)"
             android:textColor="@color/blanco"
             android:textSize="14sp"
             android:textStyle="bold" />
@@ -252,7 +252,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="El SATÉLITE es el único equipo que sube los registros al servidor y consulta las reservas; después se las reparte a los demás por el Wi-Fi. Elija UN satélite para la vía y UNO para el interior (o uno solo para los dos) y deje los demás en «Normal»: ellos entregan lo suyo al satélite y reciben de él las reservas."
+            android:text="Todos los equipos reciben, registran y se reenvían todo entre sí. Solo los ADMINISTRADORES (máximo 2 a la vez, mínimo 1) hablan con el servidor: suben los registros, traen las reservas y las reparten a todos. Deje la mayoría en «Automático» y marque «Administrador» en 1 o 2 equipos que tengan buen internet (con la dirección del servidor puesta); si uno falla, el otro sigue. Los «Receptores» entregan lo suyo a un administrador. Todos los equipos deben estar conectados al mismo Wi-Fi."
             android:textColor="@color/texto_suave"
             android:textSize="12sp" />
 
@@ -458,6 +458,53 @@
             android:text="Cambiar el PIN de configuración"
             android:textColor="@color/blanco"
             app:strokeColor="@color/tarjeta_borde" />
+
+        <TextView
+            style="@style/TituloSeccion"
+            android:layout_marginTop="18dp"
+            android:text="RADIO · WALKIE-TALKIE" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajRadioActiva"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Radio encendida (botón «RADIO» en la pantalla)" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Mantenga pulsado el botón para hablar: se pone rojo y todos los equipos del mismo canal lo oyen (se pone verde con el nombre de quien habla). Por el Wi-Fi funciona sola; para equipos lejanos o con 4G escriba la dirección del servidor de radio."
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Radio por internet (opcional)"
+            app:helperText="Ej: https://mi-servidor.com/api/radio. Vacía = se toma la de envío (…/api/registros → …/api/radio)">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajUrlRadio"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Canal de la radio"
+            app:helperText="Solo se oyen los equipos del mismo canal (letras y números). Predeterminado: general">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ajRadioCanal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="text"
+                android:maxLength="24" />
+        </com.google.android.material.textfield.TextInputLayout>
 
         <TextView
             style="@style/TituloSeccion"

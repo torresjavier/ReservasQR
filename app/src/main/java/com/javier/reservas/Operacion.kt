@@ -151,14 +151,14 @@ object Operacion {
         reaplicarEquipos()
         guardar()
         avisar()
-        // Si este equipo es satélite, el listado nuevo se reparte a los demás equipos.
+        // El listado nuevo se reparte a los demás equipos.
         RedLocal.tablaCambio()
     }
 
     /**
      * Suma las reservas de un Excel al listado que ya hay, SIN duplicar (se reconocen por código o placa) y sin perder lo ya
-     * validado ni ingresado. Se puede cargar el mismo archivo las veces que se quiera. Si este equipo es satélite, se las
-     * reparte a los demás. Devuelve {nuevas, ya estaban, de esas sin ningún cambio}.
+     * validado ni ingresado. Se puede cargar el mismo archivo las veces que se quiera. Se las reparte
+     * a los demás equipos. Devuelve {nuevas, ya estaban, de esas sin ningún cambio}.
      */
     fun agregarDeExcel(encabezados: List<String>, filas: List<List<String>>): IntArray {
         val l = listado ?: return intArrayOf(0, 0, 0)
@@ -171,7 +171,7 @@ object Operacion {
     }
 
     /**
-     * Agrega/actualiza reservas recibidas del servidor (o de un satélite por la red de equipos, con [nombre] distinto).
+     * Agrega/actualiza reservas recibidas del servidor (o de otro equipo por la red de equipos, con [nombre] distinto).
      * Devuelve {nuevas, actualizadas}.
      */
     fun fusionarDelServidor(encabezados: List<String>, filas: List<List<String>>, nombre: String = "Servidor"): IntArray {
@@ -391,7 +391,7 @@ object Operacion {
         return Resultado.Ingresado(fila, !validada, aviso)
     }
 
-    private fun validar(fila: Int, origen: Origen, placaLeida: String?, foto: Bitmap?) {
+    private fun validar(fila: Int, origen: Origen, placaLeida: String?, foto: Bitmap?, momento: String = "VIA") {
         val l = listado ?: return
         val ahora = horaEvento(fila)
         l.validaciones[fila] = ahora
@@ -401,7 +401,7 @@ object Operacion {
         guardar()
         RedLocal.publicar(EventoRed.VALIDACION, fila, ahora)
         if (ajustes.enviarAlValidar) {
-            val e = nuevoEvento("VALIDACION", fila, "VALIDADA", "VIA")
+            val e = nuevoEvento("VALIDACION", fila, "VALIDADA", momento)
             e.put("id_validacion", id)
             e.put("fecha_validacion", iso(ahora))
             e.put("origen", origen.api)
@@ -415,6 +415,10 @@ object Operacion {
 
     private fun ingresar(fila: Int, origen: Origen, placaLeida: String?, foto: Bitmap?) {
         val l = listado ?: return
+        // Adentro se puede registrar aunque no se haya validado en la vía: primero se deja validada aquí mismo (así queda
+        // el rastro completo en todos los equipos y en el servidor) y enseguida se registra el ingreso.
+        val estabaValidada = l.validaciones.containsKey(fila)
+        if (!estabaValidada) validar(fila, origen, placaLeida, null, "INTERIOR")
         val ahora = horaEvento(fila)
         l.ingresos[fila] = ahora
         val id = UUID.randomUUID().toString()
@@ -426,9 +430,10 @@ object Operacion {
         e.put("id_ingreso", id)
         e.put("fecha_ingreso", iso(ahora))
         l.validaciones[fila]?.let {
-            e.put("validado_en_via", true)
+            e.put("validado_en_via", estabaValidada)
             e.put("fecha_validacion", iso(it))
         } ?: e.put("validado_en_via", false)
+        if (!estabaValidada) e.put("validado_en_interior", true)
         e.put("origen", origen.api)
         e.put("placa_leida", placaLeida.orEmpty())
         if (archivoFoto != null) e.put("foto_archivo", archivoFoto)
@@ -515,7 +520,7 @@ object Operacion {
     }
 
     /**
-     * El operador de este equipo (un satélite) da la orden para TODOS los equipos conectados: borrar a la [hora] dada
+     * El operador de este equipo (un administrador) da la orden para TODOS los equipos conectados: borrar a la [hora] dada
      * (si es menor o igual a la actual, ahora mismo) o, con [hora] = 0, cancelar lo programado. Los equipos que estén
      * apagados la reciben cuando se reconecten.
      */

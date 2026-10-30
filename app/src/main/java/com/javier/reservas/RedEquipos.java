@@ -59,22 +59,76 @@ public final class RedEquipos {
     /** Tamaño máximo de los datos de un mensaje de datos (una foto o un trozo de tabla); en hexadecimal y cifrado cabe en MAX_LINEA. */
     public static final int MAX_DATO = 1_300_000;
 
-    /** Papeles de un equipo frente al servidor: el «satélite» es el único que sube y descarga; los demás le entregan lo suyo. */
+    /**
+     * Papeles de un equipo frente al servidor. Todos los equipos son iguales para la red (reciben, procesan y reenvían todo);
+     * lo único que cambia es quién habla con el servidor: los «administradores» (máximo 2 activos a la vez, mínimo 1).
+     * <ul>
+     * <li>ADMIN: quiere ser administrador. Si hay más de 2 conectados, los demás esperan de reserva.</li>
+     * <li>AUTO: solo se vuelve administrador si no hay ninguno conectado (así siempre hay uno).</li>
+     * <li>RECEPTOR: nunca habla con el servidor; entrega sus registros a un administrador.</li>
+     * </ul>
+     * Los valores de versiones anteriores (NINGUNO, VIA, INTERIOR, AMBOS) se leen como RECEPTOR y ADMIN.
+     */
+    public static final String ROL_ADMIN = "ADMIN";
+    public static final String ROL_AUTO = "AUTO";
+    public static final String ROL_RECEPTOR = "RECEPTOR";
     public static final String ROL_NINGUNO = "NINGUNO";
     public static final String ROL_VIA = "VIA";
     public static final String ROL_INTERIOR = "INTERIOR";
     public static final String ROL_AMBOS = "AMBOS";
+    /** Cuántos administradores trabajan a la vez como máximo. */
+    public static final int MAX_ADMINS = 2;
 
-    /** @return true si un equipo con este rol se encarga del servidor para ese momento («VIA» o «INTERIOR») */
-    public static boolean cubre(String rol, String momento) {
-        if (rol == null || momento == null) return false;
-        if (ROL_AMBOS.equals(rol)) return true;
-        return rol.equals(momento);
+    /** @return true si el rol pide ser administrador de forma fija (ADMIN o cualquiera de los antiguos de satélite) */
+    public static boolean esAdminFijo(String rol) {
+        return ROL_ADMIN.equals(rol) || ROL_VIA.equals(rol) || ROL_INTERIOR.equals(rol) || ROL_AMBOS.equals(rol);
     }
 
-    /** @return true si el rol es de satélite de algún momento */
+    /** @return true si el rol solo es administrador cuando hace falta uno (automático) */
+    public static boolean esAuto(String rol) {
+        return ROL_AUTO.equals(rol);
+    }
+
+    /** @return true si el rol puede llegar a ser administrador (todos menos RECEPTOR / NINGUNO) */
+    public static boolean puedeAdministrar(String rol) {
+        return esAdminFijo(rol) || esAuto(rol);
+    }
+
+    /** Compatibilidad: antes se decía «satélite». @return true si el rol puede llegar a ser administrador */
     public static boolean esSatelite(String rol) {
-        return ROL_VIA.equals(rol) || ROL_INTERIOR.equals(rol) || ROL_AMBOS.equals(rol);
+        return puedeAdministrar(rol);
+    }
+
+    /** Compatibilidad: un administrador cubre los dos momentos (vía e interior). */
+    public static boolean cubre(String rol, String momento) {
+        return momento != null && puedeAdministrar(rol);
+    }
+
+    /**
+     * Elige quiénes son los administradores que trabajan ahora, con lo que se ve en este momento. Todos los equipos
+     * hacen la misma cuenta con los mismos datos, así que llegan al mismo resultado sin ponerse de acuerdo:
+     * los 2 primeros administradores fijos conectados (por identificador); si no hay ninguno, el primer automático.
+     * @param ids      identificadores de los equipos conectados (incluido este)
+     * @param roles    el rol de cada uno, en el mismo orden
+     * @return los identificadores de los administradores activos (vacío si nadie puede serlo)
+     */
+    public static java.util.Set<String> elegirAdmins(java.util.List<String> ids, java.util.List<String> roles) {
+        java.util.TreeSet<String> fijos = new java.util.TreeSet<>();
+        java.util.TreeSet<String> autos = new java.util.TreeSet<>();
+        for (int i = 0; i < ids.size() && i < roles.size(); i++) {
+            String id = ids.get(i);
+            if (id == null || id.isEmpty()) continue;
+            String rol = roles.get(i);
+            if (esAdminFijo(rol)) fijos.add(id);
+            else if (esAuto(rol)) autos.add(id);
+        }
+        java.util.LinkedHashSet<String> r = new java.util.LinkedHashSet<>();
+        for (String id : fijos) {
+            if (r.size() >= MAX_ADMINS) break;
+            r.add(id);
+        }
+        if (r.isEmpty() && !autos.isEmpty()) r.add(autos.first());
+        return r;
     }
 
     public interface Oyente {

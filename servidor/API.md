@@ -97,6 +97,7 @@ Las alertas traen la foto del vehículo cuando se detectaron con la cámara.
 ```
 
 Un `INGRESO` trae además `id_ingreso`, `fecha_ingreso`, `validado_en_via` (true/false) y, si pasó por la vía, `fecha_validacion`.
+Desde la 2.1, si el equipo de adentro tuvo que validar la reserva en el mismo momento (no había pasado por la vía), el `INGRESO` trae `validado_en_via: false` y `validado_en_interior: true`, y antes llega un evento `VALIDACION` con `momento: "INTERIOR"`.
 
 | Campo | Significado |
 |---|---|
@@ -201,3 +202,28 @@ En la app escriba:
 - Enviar registros: `https://su-servidor.com/api/registros`
 - Traer reservas: `https://su-servidor.com/api/reservas`
 - Token: el mismo `TOKEN`
+
+
+## Radio (walkie-talkie, v2.1)
+
+La voz viaja en trozos de 250 ms comprimidos (μ-law, 8 kHz, ~2 KB cada uno) dentro de un paquete binario que la app arma; el servidor
+**no lo interpreta ni lo guarda en disco**: solo lo reparte a los equipos del mismo canal durante unos segundos (en memoria).
+Se pide el mismo `Authorization: Bearer <TOKEN>` que en las demás rutas.
+
+### POST /api/radio
+
+```json
+{ "canal": "general", "de": "id-del-equipo", "paquetes": ["<base64>", "<base64>"] }
+```
+
+Respuesta: `{ "ok": true, "hasta": 17 }` (`hasta` = número del último paquete guardado en el canal).
+
+### GET /api/radio?canal=general&yo=id-del-equipo&desde=17
+
+«Long polling»: si hay paquetes con número mayor que `desde` los devuelve al instante; si no, **espera hasta 8 segundos** a que lleguen y responde.
+
+```json
+{ "hasta": 19, "paquetes": [ { "n": 18, "p": "<base64>" }, { "n": 19, "p": "<base64>" } ] }
+```
+
+La primera vez la app manda `desde=-1`: el servidor responde solo con `hasta` (sin paquetes) para no repetir voz vieja. Después la app vuelve a preguntar con el último `hasta`.

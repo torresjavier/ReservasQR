@@ -214,8 +214,10 @@ class Ajustes(ctx: Context) {
 
     /** Adentro: no dar ingreso a quien no pasó antes por la vía (posible colado). */
     var exigirValidacion: Boolean
-        get() = p.getBoolean("exigirValidacion", false)
-        set(v) = guardar("exigirValidacion", v)
+        // Clave nueva desde la 2.1: lo que dejó guardado el botón «Equipo INTERIOR» de antes (bloquear a quien no pasó por la vía)
+        // ya no se aplica. Adentro siempre se puede registrar; esto solo vuelve a bloquear si alguien lo activa a propósito.
+        get() = p.getBoolean("exigirViaOpcional", false)
+        set(v) = guardar("exigirViaOpcional", v)
 
     /** Enviar las alertas (sin reserva, repetidos, sin validar) al servidor. */
     var enviarAlertas: Boolean
@@ -283,19 +285,47 @@ class Ajustes(ctx: Context) {
         set(v) = guardar("redIps", v)
 
     /**
-     * Papel de este equipo frente al servidor: «satélite» es el único que sube los registros y descarga las reservas
-     * (y se las reparte a los demás por el Wi-Fi). Valores: NINGUNO (entrega todo al satélite), VIA, INTERIOR o AMBOS.
-     * Hasta que se elija otro, todos los equipos son satélites de ambos momentos, como en la versión anterior.
+     * Papel de este equipo frente al servidor. Todos los equipos reciben, procesan y reenvían todo; solo cambia quién habla
+     * con el servidor: los administradores (máximo 2 a la vez, mínimo 1). Valores: ADMIN (quiere ser administrador),
+     * AUTO (lo es solo si no hay otro conectado; es lo normal) o RECEPTOR (nunca habla con el servidor).
+     * Los valores de la versión anterior se leen así: AMBOS/VIA/INTERIOR = ADMIN, NINGUNO = RECEPTOR.
      */
     var satelite: String
-        get() = texto("satelite", RedEquipos.ROL_AMBOS).let { if (it in ROLES) it else RedEquipos.ROL_AMBOS }
-        set(v) = guardar("satelite", if (v in ROLES) v else RedEquipos.ROL_AMBOS)
+        get() = when (val v = texto("satelite", RedEquipos.ROL_AUTO)) {
+            RedEquipos.ROL_ADMIN, RedEquipos.ROL_AUTO, RedEquipos.ROL_RECEPTOR -> v
+            RedEquipos.ROL_AMBOS, RedEquipos.ROL_VIA, RedEquipos.ROL_INTERIOR -> RedEquipos.ROL_ADMIN
+            RedEquipos.ROL_NINGUNO -> RedEquipos.ROL_RECEPTOR
+            else -> RedEquipos.ROL_AUTO
+        }
+        set(v) = guardar("satelite", if (v in ROLES || v in ROLES_ANTIGUOS) v else RedEquipos.ROL_AUTO)
 
-    /** Este equipo habla con el servidor (sube registros y descarga reservas). */
-    val esSatelite: Boolean get() = RedEquipos.esSatelite(satelite)
+    /** El papel que este equipo anuncia a los demás: sin servidor configurado no puede ser administrador, se anuncia como receptor. */
+    val rolAnunciado: String
+        get() {
+            val r = satelite
+            return if (RedEquipos.puedeAdministrar(r) && (urlEnvio.isNotBlank() || urlReservas.isNotBlank())) r else RedEquipos.ROL_RECEPTOR
+        }
 
-    /** Este equipo es el que sube al servidor los registros de ese momento («VIA» o «INTERIOR»). */
-    fun cubre(momento: String): Boolean = RedEquipos.cubre(satelite, momento)
+    /** Este equipo puede llegar a ser administrador (lo eligió él y tiene servidor), aunque ahora no le toque. */
+    val puedeAdministrar: Boolean get() = RedEquipos.puedeAdministrar(rolAnunciado)
+
+    /** Este equipo es, ahora mismo, uno de los administradores: es el que sube los registros y descarga las reservas. */
+    val esSatelite: Boolean get() = RedLocal.soyAdmin(this)
+
+    /** Radio (pulsar para hablar) encendida en este equipo. */
+    var radioActiva: Boolean
+        get() = p.getBoolean("radioActiva", true)
+        set(v) = guardar("radioActiva", v)
+
+    /** Dirección del servidor de radio por internet (vacía = solo por el Wi-Fi). Si está vacía se usa la dirección de envío del servidor. */
+    var urlRadio: String
+        get() = texto("urlRadio", "")
+        set(v) = guardar("urlRadio", v.trim())
+
+    /** Canal de la radio: solo se oyen los equipos del mismo canal. */
+    var radioCanal: String
+        get() = texto("radioCanal", "general").ifBlank { "general" }
+        set(v) = guardar("radioCanal", v.trim().lowercase().replace(Regex("[^a-z0-9_-]"), "").take(24).ifBlank { "general" })
 
     /** Sonar un pitido cuando se lee una reserva (si no se encuentra o hay algo raro, el equipo vibra). */
     var sonidoAlLeer: Boolean
@@ -307,7 +337,7 @@ class Ajustes(ctx: Context) {
         get() = p.getLong("redCorte", 0L)
         set(v) = p.edit().putLong("redCorte", v).apply()
 
-    // ---- Borrado de fin de evento (la orden la da un satélite y se reparte a todos los equipos)
+    // ---- Borrado de fin de evento (la orden la da un administrador y se reparte a todos los equipos)
     /** Número de la orden vigente (la hora en que se dio; una más nueva reemplaza a la anterior). 0 = nunca hubo. */
     var borradoOrdenId: Long
         get() = p.getLong("borradoOrdenId", 0L)
@@ -363,7 +393,9 @@ class Ajustes(ctx: Context) {
     companion object {
         /** Clave que usan todos los equipos mientras no se escriba otra en Ajustes. */
         const val CLAVE_RED = "reservasqr-red"
-        val ROLES = setOf(RedEquipos.ROL_NINGUNO, RedEquipos.ROL_VIA, RedEquipos.ROL_INTERIOR, RedEquipos.ROL_AMBOS)
+        val ROLES = setOf(RedEquipos.ROL_ADMIN, RedEquipos.ROL_AUTO, RedEquipos.ROL_RECEPTOR)
+        /** Valores de la versión anterior: se siguen entendiendo (AMBOS/VIA/INTERIOR = administrador, NINGUNO = receptor). */
+        val ROLES_ANTIGUOS = setOf(RedEquipos.ROL_NINGUNO, RedEquipos.ROL_VIA, RedEquipos.ROL_INTERIOR, RedEquipos.ROL_AMBOS)
         const val BIENVENIDA ="¡Bienvenido(a), {nombre}! Gracias por su reserva para {evento}. Conserve este ticket para la salida."
         const val VIP = "Cliente VIP: acceso preferencial. ¡Gracias por acompañarnos!"
     }

@@ -72,10 +72,9 @@ class MainActivity : AppCompatActivity() {
 
     /** Papeles que se pueden elegir en Ajustes para este equipo frente al servidor. */
     private val ROLES_SATELITE = listOf(
-        RedEquipos.ROL_AMBOS to "Satélite de VÍA e INTERIOR (sube y consulta todo)",
-        RedEquipos.ROL_VIA to "Satélite de la VÍA",
-        RedEquipos.ROL_INTERIOR to "Satélite del INTERIOR",
-        RedEquipos.ROL_NINGUNO to "Normal (entrega al satélite por el Wi-Fi)"
+        RedEquipos.ROL_AUTO to "Automático (recomendado): administra solo si falta uno",
+        RedEquipos.ROL_ADMIN to "Administrador: sube al servidor y reparte (máx. 2)",
+        RedEquipos.ROL_RECEPTOR to "Receptor: registra y entrega a un administrador"
     )
 
     /** Selector de archivos que puede abrir directo en la carpeta de Bluetooth. */
@@ -250,6 +249,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         Operacion.iniciar(this)
         Bloqueo.instalar()
+        radioEnlace = RadioUi.adjuntar(this)
 
         header = findViewById(R.id.header)
         avatar = findViewById(R.id.avatar)
@@ -361,8 +361,11 @@ class MainActivity : AppCompatActivity() {
         manejarIntent(intent)
     }
 
+    private lateinit var radioEnlace: RadioUi.Enlace
+
     override fun onResume() {
         super.onResume()
+        radioEnlace.reanudar()
         Impresora.conectar(this)
         EscanerSunmi.conectar(this)
         try {
@@ -395,6 +398,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        radioEnlace.pausar()
         try {
             unregisterReceiver(receptorEscaner)
         } catch (_: Exception) {
@@ -684,7 +688,7 @@ class MainActivity : AppCompatActivity() {
                 if (resultado.sinValidar || resultado.aviso != null) vibrar(400) else Avisos.leida(this)
                 val auto = ajustes.autoImprimir
                 val notas = listOfNotNull(
-                    if (resultado.sinValidar) "⚠ No pasó por la vía antes de ingresar." else null,
+                    if (resultado.sinValidar) "⚠ No había pasado por la vía: se validó y registró aquí." else null,
                     resultado.aviso
                 ).joinToString("\n").ifBlank { null }
                 mostrarTarjeta(
@@ -941,11 +945,11 @@ class MainActivity : AppCompatActivity() {
         }
         item(R.drawable.ic_bluetooth, "Recibir Excel por Bluetooth", "Hace visible el equipo para recibir el archivo") { mostrarBluetooth() }
         if (satelite) {
-            item(R.drawable.ic_actualizar, "Traer reservas del servidor", "Agrega reservas nuevas sin subir Excel; luego se las reparte a los demás equipos") { actualizarReservas() }
+            item(R.drawable.ic_actualizar, "Traer reservas del servidor", "Agrega reservas nuevas sin subir Excel; luego se las reparte a todos los equipos") { actualizarReservas() }
             item(R.drawable.ic_nube, "Enviar registros ahora", if (pendientes > 0) "$pendientes registros esperando" else "No hay registros pendientes") { enviarAhora() }
         } else {
-            item(R.drawable.ic_actualizar, "Pedir reservas al satélite", "Este equipo no consulta al servidor: recibe la tabla del satélite por Wi-Fi") { actualizarReservas() }
-            item(R.drawable.ic_nube, "Entregar registros al satélite", if (pendientes > 0) "$pendientes registros esperando al satélite" else "No hay registros pendientes") { enviarAhora() }
+            item(R.drawable.ic_actualizar, "Pedir reservas a los demás equipos", "Este equipo no consulta al servidor: recibe la tabla de los otros equipos por Wi-Fi") { actualizarReservas() }
+            item(R.drawable.ic_nube, "Entregar registros al administrador", if (pendientes > 0) "$pendientes registros esperando a un administrador" else "No hay registros pendientes") { enviarAhora() }
         }
         item(R.drawable.ic_camara, "Escanear QR con la cámara", "Si el lector Sunmi no está disponible") { iniciarEscaneo(conCamara = true) }
         item(R.drawable.ic_columnas, "Columnas del Excel y plantilla", "Qué datos debe tener el listado") { mostrarColumnas(false) }
@@ -967,14 +971,14 @@ class MainActivity : AppCompatActivity() {
     private fun enviarAhora() {
         val n = Bandeja.cantidad(this)
         if (!ajustes.esSatelite) {
-            // Este equipo no sube al servidor: se los entrega al satélite por el Wi-Fi
+            // Este equipo no sube al servidor ahora: se los entrega a un administrador por el Wi-Fi
             when {
                 n == 0 -> toast("No hay registros por entregar.")
-                !ajustes.redActiva -> toast("La red entre equipos está apagada: actívela en Ajustes para entregar los registros al satélite.")
-                RedLocal.satelites().isEmpty() -> toast("No se ve ningún satélite en el Wi-Fi. Los $n registros esperan.")
+                !ajustes.redActiva -> toast("La red entre equipos está apagada: actívela en Ajustes para entregar los registros a un administrador.")
+                RedLocal.administradores().isEmpty() -> toast("No se ve ningún administrador en el Wi-Fi. Los $n registros esperan.")
                 else -> {
                     RedLocal.entregarPendientes()
-                    toast("Entregando $n registros al satélite…")
+                    toast("Entregando $n registros a un administrador…")
                 }
             }
             return
@@ -985,7 +989,7 @@ class MainActivity : AppCompatActivity() {
         val propios = Bandeja.contar(this, Sincronizacion.propios(this))
         RedLocal.entregarPendientes()
         if (propios == 0) {
-            toast(if (n == 0) "No hay registros por enviar." else "Lo que queda es de otro satélite: se le entrega por el Wi-Fi."); return
+            toast(if (n == 0) "No hay registros por enviar." else "Lo que queda es una copia de respaldo del otro administrador: la sube él."); return
         }
         Sincronizacion.enviarAhora(this)
         toast("Enviando $propios registros (cuando haya internet)…")
@@ -994,11 +998,11 @@ class MainActivity : AppCompatActivity() {
     private fun actualizarReservas() {
         if (!ajustes.esSatelite) {
             when {
-                !ajustes.redActiva -> toast("La red entre equipos está apagada: actívela en Ajustes para recibir las reservas del satélite.")
-                RedLocal.satelites().isEmpty() -> toast("No se ve ningún satélite en el Wi-Fi.")
+                !ajustes.redActiva -> toast("La red entre equipos está apagada: actívela en Ajustes para recibir las reservas de los demás equipos.")
+                RedLocal.administradores().isEmpty() && RedLocal.conectados() == 0 -> toast("No se ve ningún equipo en el Wi-Fi.")
                 else -> {
                     RedLocal.pedirTablas()
-                    toast("Pidiendo las reservas al satélite…")
+                    toast("Pidiendo las reservas a los demás equipos…")
                 }
             }
             return
@@ -1454,6 +1458,9 @@ class MainActivity : AppCompatActivity() {
         val redClave = v.findViewById<EditText>(R.id.ajRedClave)
         val redIps = v.findViewById<EditText>(R.id.ajRedIps)
         val sonido = v.findViewById<MaterialSwitch>(R.id.ajSonidoLeer)
+        val radioActiva = v.findViewById<MaterialSwitch>(R.id.ajRadioActiva)
+        val urlRadio = v.findViewById<EditText>(R.id.ajUrlRadio)
+        val radioCanal = v.findViewById<EditText>(R.id.ajRadioCanal)
         val satelite = v.findViewById<Spinner>(R.id.ajSatelite)
 
         satelite.adapter = adaptadorSpinner(ROLES_SATELITE.map { it.second })
@@ -1486,6 +1493,9 @@ class MainActivity : AppCompatActivity() {
         redClave.setText(ajustes.redClave)
         redIps.setText(ajustes.redIps)
         sonido.isChecked = ajustes.sonidoAlLeer
+        radioActiva.isChecked = ajustes.radioActiva
+        urlRadio.setText(ajustes.urlRadio)
+        radioCanal.setText(ajustes.radioCanal)
         val cierraEquipos = prepararListaEquipos(v)
         val cierraBorrado = prepararBorrado(v)
         v.findViewById<View>(R.id.ajRedBateria).setOnClickListener { permitirSegundoPlano() }
@@ -1504,9 +1514,9 @@ class MainActivity : AppCompatActivity() {
             soloPlaca.isChecked = false
             auto.isChecked = true
             envVal.isChecked = true
-            exigir.isChecked = true
+            exigir.isChecked = false
             envAlertas.isChecked = true
-            toast("Equipo interior: registra e imprime, y exige haber pasado por la vía. Toque «Guardar».")
+            toast("Equipo interior: valida (si falta), registra e imprime. Toque «Guardar».")
         }
         v.findViewById<View>(R.id.ajCambiarPin).setOnClickListener { crearPin(null) }
 
@@ -1536,12 +1546,22 @@ class MainActivity : AppCompatActivity() {
             ajustes.redClave = redClave.text.toString()
             ajustes.redIps = redIps.text.toString()
             ajustes.sonidoAlLeer = sonido.isChecked
+            ajustes.radioActiva = radioActiva.isChecked
+            ajustes.urlRadio = urlRadio.text.toString()
+            ajustes.radioCanal = radioCanal.text.toString()
             ajustes.satelite = ROLES_SATELITE[satelite.selectedItemPosition.coerceIn(0, ROLES_SATELITE.size - 1)].first
-            if (!ajustes.redActiva && !ajustes.esSatelite) {
-                Toast.makeText(this, "Con la red entre equipos apagada y el papel «Normal», este equipo no enviará nada al servidor.", Toast.LENGTH_LONG).show()
+            if (!ajustes.puedeAdministrar) {
+                Toast.makeText(
+                    this,
+                    if (ajustes.satelite == RedEquipos.ROL_RECEPTOR) "Receptor: este equipo no habla con el servidor; entrega sus registros a un administrador."
+                    else "Para ser administrador este equipo necesita la dirección del servidor (envío o reservas).",
+                    Toast.LENGTH_LONG
+                ).show()
             }
             RedLocal.aplicarAjustes(this)
+            Radio.aplicarAjustes()
             Sincronizacion.programar(this)
+            radioEnlace.reanudar()
             refrescar()
         }
         v.findViewById<Button>(R.id.ajPrueba).setOnClickListener { guardarCampos(); enviarAImpresora(Operacion.lineasPrueba(), null) }
@@ -1565,7 +1585,7 @@ class MainActivity : AppCompatActivity() {
     private val fmtBorrado = SimpleDateFormat("EEEE dd/MM/yyyy hh:mm a", co)
 
     /**
-     * Sección «Fin del evento» de Ajustes. Solo un satélite puede dar la orden para todos los equipos (programada o ahora);
+     * Sección «Fin del evento» de Ajustes. Solo un administrador (o un equipo en «Automático») puede dar la orden para todos los equipos (programada o ahora);
      * los demás equipos ven lo programado y pueden borrar solo lo suyo.
      * @return lo que hay que llamar al cerrar Ajustes
      */
@@ -1575,7 +1595,7 @@ class MainActivity : AppCompatActivity() {
         val programar = v.findViewById<Button>(R.id.ajBorradoProgramar)
         val cancelar = v.findViewById<Button>(R.id.ajBorradoCancelar)
         val ahora = v.findViewById<Button>(R.id.ajBorradoAhora)
-        val esSatelite = ajustes.esSatelite
+        val esSatelite = ajustes.puedeAdministrar
 
         programar.visibility = if (esSatelite) View.VISIBLE else View.GONE
         cancelar.visibility = if (esSatelite) View.VISIBLE else View.GONE
@@ -1583,14 +1603,14 @@ class MainActivity : AppCompatActivity() {
 
         fun pintar() {
             val pend = Operacion.borradoPendiente()
-            val por = ajustes.borradoPor.ifBlank { "un satélite" }
+            val por = ajustes.borradoPor.ifBlank { "un administrador" }
             if (pend > 0L) {
                 estado.text = "Borrado programado: ${fmtBorrado.format(Date(pend))}"
                 nota.text = "Lo ordenó $por. A esa hora se borra todo en los equipos conectados; el que esté apagado o fuera del Wi-Fi se borra al volver (hasta 12 horas después)."
             } else {
                 estado.text = if (ajustes.borradoUltimo > 0L) "Sin borrado programado. Último borrado en este equipo: ${fmtBorrado.format(Date(ajustes.borradoUltimo))}" else "Sin borrado programado"
                 nota.text = when {
-                    !esSatelite -> "Este equipo no es satélite: el borrado de todos los equipos lo programa un satélite. Aquí solo se puede borrar este equipo."
+                    !esSatelite -> "Este equipo es receptor (o no tiene servidor configurado): el borrado de todos los equipos lo programa un administrador. Aquí solo se puede borrar este equipo."
                     !ajustes.redActiva -> "La red entre equipos está apagada: la orden solo se cumpliría en este equipo."
                     else -> "La orden se manda por el Wi-Fi a todos los equipos conectados y la guardan, así que se cumple aunque en ese momento nadie toque nada."
                 }
@@ -1709,10 +1729,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun nombreRol(rol: String): String = when (rol) {
-        RedEquipos.ROL_AMBOS -> "Satélite de VÍA e INTERIOR"
-        RedEquipos.ROL_VIA -> "Satélite de la VÍA"
-        RedEquipos.ROL_INTERIOR -> "Satélite del INTERIOR"
-        RedEquipos.ROL_NINGUNO -> "Normal (entrega al satélite)"
+        RedEquipos.ROL_ADMIN, RedEquipos.ROL_AMBOS, RedEquipos.ROL_VIA, RedEquipos.ROL_INTERIOR -> "Administrador"
+        RedEquipos.ROL_AUTO -> "Automático"
+        RedEquipos.ROL_RECEPTOR, RedEquipos.ROL_NINGUNO -> "Receptor"
         else -> "Versión anterior de la app"
     }
 
@@ -1749,7 +1768,7 @@ class MainActivity : AppCompatActivity() {
         v.findViewById<View>(R.id.ajSincronizar).setOnClickListener {
             RedLocal.sincronizarAhora()
             RedLocal.pedirTablas()
-            if (ajustes.esSatelite) RedLocal.tablaCambio()
+            RedLocal.tablaCambio()
             toast("Comparando lo que sabe cada equipo…")
         }
         RedLocal.escuchar(oyente)
@@ -1844,7 +1863,8 @@ class MainActivity : AppCompatActivity() {
         titulo.setSpan(ForegroundColorSpan(getColor(if (f.conectado) R.color.blanco else R.color.rojo)), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         fila.findViewById<TextView>(R.id.eqTitulo).text = titulo
         fila.findViewById<TextView>(R.id.eqRol).text =
-            nombreRol(f.rol) + (if (f.ip.isNotBlank()) "  ·  " + f.ip else "") + (if (!f.conectado) "  ·  sin conexión" else "")
+            nombreRol(f.rol) + (if (f.admin) " ★ ADMINISTRA AHORA" else if (f.conectado && RedEquipos.puedeAdministrar(f.rol)) " (de reserva)" else "") +
+                (if (f.ip.isNotBlank()) "  ·  " + f.ip else "") + (if (!f.conectado) "  ·  sin conexión" else "")
         fila.findViewById<TextView>(R.id.eqRecibido).text = "↓ Última actualización recibida: " + haceCuanto(f.ultimaRecibida)
         fila.findViewById<TextView>(R.id.eqEnviado).text = "↑ Última actualización enviada: " + haceCuanto(f.ultimaEnviada)
         fila.findViewById<TextView>(R.id.eqConteo).text = "Hoy: ${f.validadas} validadas · ${f.ingresadas} ingresadas"
@@ -1852,7 +1872,7 @@ class MainActivity : AppCompatActivity() {
             val sv = fila.findViewById<TextView>(R.id.eqServidor)
             sv.visibility = View.VISIBLE
             sv.text = if (!ajustes.esSatelite) {
-                "Servidor: no habla con él (lo hace el satélite)"
+                if (ajustes.puedeAdministrar) "Servidor: de reserva (lo hacen los administradores que están conectados)" else "Servidor: no habla con él (lo hacen los administradores)"
             } else {
                 "Servidor: subió " + haceCuanto(Sincronizacion.ultimoEnvio) + " · consultó " + haceCuanto(Sincronizacion.ultimaDescarga) +
                     (Sincronizacion.ultimoError?.let { "\n⚠ $it" } ?: "")
@@ -2111,14 +2131,14 @@ class MainActivity : AppCompatActivity() {
         chipEnvio.text = estadoEnvio()
     }
 
-    /** Texto del indicador de envío: el satélite cuenta lo que sube al servidor; los demás, lo que entregan al satélite. */
+    /** Texto del indicador de envío: el administrador cuenta lo que sube al servidor; los demás, lo que entregan a un administrador. */
     private fun estadoEnvio(): CharSequence {
         val ajenos = Bandeja.contar(this, Sincronizacion.ajenos(this))
         if (!ajustes.esSatelite) {
             return when {
-                ajenos == 0 -> punto("Normal · lo sube el satélite", true)
-                RedLocal.satelites().isEmpty() -> punto("$ajenos esperando al satélite (no se ve ninguno)", false)
-                else -> punto("$ajenos por entregar al satélite", true)
+                ajenos == 0 -> punto("Receptor · lo suben los administradores", true)
+                RedLocal.administradores().isEmpty() -> punto("$ajenos esperando a un administrador (no se ve ninguno)", false)
+                else -> punto("$ajenos por entregar a un administrador", true)
             }
         }
         if (!Sincronizacion.configuradoEnvio(this)) return punto("Sin servidor", false)
@@ -2129,7 +2149,7 @@ class MainActivity : AppCompatActivity() {
             propios > 0 -> "$propios por enviar"
             else -> "Todo enviado"
         }
-        if (ajenos > 0) texto += " · $ajenos de otro satélite"
+        if (ajenos > 0) texto += " · $ajenos de respaldo"
         return punto(texto, error == null)
     }
 

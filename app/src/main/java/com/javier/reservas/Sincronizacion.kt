@@ -193,23 +193,23 @@ object Sincronizacion {
     private var redRegistrada = false
     private var ultimoDisparoRed = 0L
 
-    /** Solo el satélite habla con el servidor: los demás equipos entregan sus registros al satélite por el Wi-Fi. */
+    /** Solo los administradores (máximo 2 a la vez) hablan con el servidor: los demás equipos entregan sus registros a uno de ellos por el Wi-Fi. */
     fun configuradoEnvio(ctx: Context) = Ajustes(ctx).let { it.urlEnvio.isNotBlank() && it.esSatelite }
     fun configuradoReservas(ctx: Context) = Ajustes(ctx).let { it.urlReservas.isNotBlank() && it.esSatelite }
 
-    /** Registros de la cola que sube este equipo (los del momento del que es satélite). */
+    /** Registros de la cola que sube este equipo: todos si es administrador ahora, ninguno si no. */
     fun propios(ctx: Context): (JSONObject) -> Boolean {
-        val aj = Ajustes(ctx)
-        return { o -> aj.cubre(o.optString("momento", "INTERIOR")) }
+        val admin = Ajustes(ctx).esSatelite
+        return { _ -> admin }
     }
 
-    /** Registros de la cola que este equipo no sube: espera a entregárselos a su satélite. */
+    /** Registros de la cola que este equipo no sube: espera a entregárselos a un administrador. */
     fun ajenos(ctx: Context): (JSONObject) -> Boolean {
-        val aj = Ajustes(ctx)
-        return { o -> !aj.cubre(o.optString("momento", "INTERIOR")) }
+        val admin = Ajustes(ctx).esSatelite
+        return { _ -> !admin }
     }
 
-    /** Se llama después de cada registro: lo entrega al satélite si este equipo no lo sube, o envía cuando se junta el lote. */
+    /** Se llama después de cada registro: lo entrega a un administrador si este equipo no lo sube, o envía cuando se junta el lote. */
     fun alRegistrar(ctx: Context) {
         RedLocal.entregarPendientes()
         if (!configuradoEnvio(ctx)) return
@@ -237,14 +237,16 @@ object Sincronizacion {
     /** Tareas periódicas de respaldo (cada 15 min, el mínimo de Android) y reinicio del latido con el intervalo actual. */
     fun programar(ctx: Context) {
         val wm = WorkManager.getInstance(ctx)
-        if (configuradoEnvio(ctx)) {
+        // Se programa en todo equipo que PUEDE ser administrador: quién lo es ahora lo decide cada ejecución (puede cambiar si uno falla)
+        val aj = Ajustes(ctx)
+        if (aj.urlEnvio.isNotBlank() && aj.puedeAdministrar) {
             wm.enqueueUniquePeriodicWork(
                 ENVIO_PERIODICO, ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<EnvioWorker>(15, TimeUnit.MINUTES).setConstraints(conInternet).build()
             )
         } else wm.cancelUniqueWork(ENVIO_PERIODICO)
 
-        if (configuradoReservas(ctx) && Ajustes(ctx).autoReservas) {
+        if (aj.urlReservas.isNotBlank() && aj.puedeAdministrar && aj.autoReservas) {
             wm.enqueueUniquePeriodicWork(
                 RESERVAS_PERIODICO, ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<ReservasWorker>(15, TimeUnit.MINUTES).setConstraints(conInternet).build()
@@ -395,6 +397,8 @@ class EnvioWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) 
                     // Si el servidor dice cuáles recibió se quitan solo esos; si no dice nada, todo el lote
                     val quitar = (recibidos ?: ids).intersect(ids) + rechazados.intersect(ids)
                     val quitados = Bandeja.quitar(ctx, quitar)
+                    // El otro administrador puede tener una copia de reserva: se le avisa para que no la vuelva a subir
+                    if (quitar.isNotEmpty()) RedLocal.avisarSubidos(quitar)
                     // Las fotos de las alertas y las que llegaron de otro equipo solo servían para este envío
                     quitados.filter { it.optString("tipo_evento") == "ALERTA" || it.optString("foto_archivo", "").startsWith(RedLocal.DIR_FOTOS_RED) }.forEach {
                         val f = it.optString("foto_archivo", "")

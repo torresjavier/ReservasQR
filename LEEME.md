@@ -1,4 +1,4 @@
-# Reservas QR · v2.0
+# Reservas QR · v2.1
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
@@ -151,7 +151,7 @@ y otra vez si estuvo más de 30 segundos en segundo plano. Si el equipo no tiene
 Cuando el evento y la operación terminan se puede dejar **todo limpio** para el siguiente. Está en **Ajustes (con PIN) → «FIN DEL EVENTO · BORRAR DATOS»**.
 
 **Qué se borra:** el listado de reservas, las validaciones, los ingresos y sus tickets, las fotos, las alertas y lo que el equipo sabía de los
-otros equipos. **Qué no:** los ajustes (PIN, servidor, nombre del equipo, papel de satélite, clave de la red) y los **registros que todavía no
+otros equipos. **Qué no:** los ajustes (PIN, servidor, nombre del equipo, papel administrador/receptor, clave de la red) y los **registros que todavía no
 se hayan enviado al servidor**: el borrado **no espera** a que se envíen, pero esos registros se siguen enviando (con su foto) y desaparecen
 solo cuando el servidor los confirma. La descarga de reservas del servidor vuelve a empezar de cero (trae todo lo que el servidor entregue).
 
@@ -159,14 +159,14 @@ Hay dos formas, y las dos se mandan a **todos los equipos conectados**:
 
 | Opción | Quién | Qué hace |
 |---|---|---|
-| **Borrar todo AHORA (todos los equipos)** | Un **satélite** | Pide escribir `BORRAR` para confirmar. Se borra este equipo y la orden viaja por el Wi-Fi a los demás, que se borran en segundo plano al recibirla. |
-| **Programar borrado automático** | Un **satélite** | Se elige **día y hora**. La orden se guarda en cada equipo y, a esa hora, todos se borran solos sin que nadie toque nada. |
-| **Cancelar el borrado programado** | Un **satélite** | Avisa a todos que no borren. |
-| **Borrar los datos de ESTE equipo ahora** | Un equipo «Normal» | Borra solo ese equipo (no manda ninguna orden). |
+| **Borrar todo AHORA (todos los equipos)** | Un **administrador** (o «Automático») | Pide escribir `BORRAR` para confirmar. Se borra este equipo y la orden viaja por el Wi-Fi a los demás, que se borran en segundo plano al recibirla. |
+| **Programar borrado automático** | Un **administrador** (o «Automático») | Se elige **día y hora**. La orden se guarda en cada equipo y, a esa hora, todos se borran solos sin que nadie toque nada. |
+| **Cancelar el borrado programado** | Un **administrador** (o «Automático») | Avisa a todos que no borren. |
+| **Borrar los datos de ESTE equipo ahora** | Un **receptor** | Borra solo ese equipo (no manda ninguna orden). |
 
 Cómo funciona por dentro:
 
-- La orden la da **un satélite**, para que no haya dos órdenes distintas; si se da otra, la más nueva reemplaza a la anterior. Los equipos «Normal» ven en Ajustes lo que está programado.
+- La orden la da **un administrador (o un equipo en «Automático»)**, para que no haya dos órdenes distintas; si se da otra, la más nueva reemplaza a la anterior. Los receptores ven en Ajustes lo que está programado.
 - Cada equipo **guarda la orden** y la reenvía a los demás; se cumple con el reloj interno de la app (cada 15 segundos), con el servicio en segundo plano y con una tarea de respaldo de Android. **Los equipos deben estar encendidos a esa hora** (y la red entre equipos encendida para recibir la orden).
 - **Un equipo apagado o fuera del Wi-Fi** recibe la orden apenas se reconecte a cualquier equipo. Si ya pasó la hora, se borra al recibirla **solo si pasaron menos de 12 horas** y el equipo **no trabajó después de esa hora**; si no, la orden se da por atendida sin borrar y hay que borrar ese equipo a mano.
 - Lo que haya pasado antes del borrado no se vuelve a aplicar. **Un equipo que no se borró no puede «revivir» el listado en uno ya limpio**: las tablas de reservas de un equipo con datos de antes del borrado se rechazan, y ese equipo recibe la orden y se limpia.
@@ -193,7 +193,7 @@ Cómo se reconoce que una reserva «ya estaba»:
 
 Una misma placa con **dos códigos distintos** son dos reservas (por ejemplo, el mismo carro en dos eventos). Si el archivo trae columnas que el listado no tenía, se crean.
 
-Si este equipo es **satélite**, lo agregado se reparte a los demás equipos; en los demás equipos no se duplica por la misma regla.
+Lo agregado se reparte a todos los demás equipos; en ellos no se duplica por la misma regla.
 **Ojo:** «Reemplazar todo» en un equipo no borra las reservas que los otros equipos ya tienen; para empezar de cero en todos hay que hacerlo en cada uno.
 
 ## Columnas del Excel
@@ -217,8 +217,8 @@ Tampoco se usa «Nearby/Google», porque necesita los servicios de Google Play y
 2. Entre cada par de equipos queda una conexión abierta (TCP). Cada validación, ingreso o anulación viaja por ahí al instante, **cifrada** (AES-256-GCM) con la **clave de la red**.
 3. Un equipo que recibe un aviso lo reenvía a los demás, así que también llega a los que no alcanzan al equipo que lo originó.
 4. Cada 30 s, y al conectarse, los equipos comparan lo que saben y se pasan lo que le falte al otro. Un equipo que estuvo apagado o sin señal **se pone al día solo**.
-5. Los avisos de validación e ingreso llevan datos mínimos (código de reserva, placa, hora, nombre del equipo y operador). Desde la v1.8 también viajan, **solo hacia el satélite**, la tabla de reservas y los registros pendientes con su foto (ver «Satélite» más abajo).
-6. Lo que llega de otro equipo **no se vuelve a enviar al servidor** como aviso: lo envía el equipo que lo originó, o el satélite si ese equipo no tiene permiso de hablar con el servidor (así no se duplica).
+5. Los avisos de validación e ingreso llevan datos mínimos (código de reserva, placa, hora, nombre del equipo y operador). Desde la v1.8 también viajan la tabla de reservas (a todos) y los registros pendientes con su foto (hacia un administrador). Desde la 2.1 también viaja la voz de la radio (ver «Administradores y receptores» y «Radio» más abajo).
+6. Lo que llega de otro equipo **no se vuelve a enviar al servidor** como aviso: lo envía el equipo que lo originó, o un administrador si ese equipo es receptor (así no se duplica: el servidor descarta lo repetido).
 
 Funciona **en segundo plano**: la app deja un servicio activo con un aviso fijo («Reservas QR · VÍA 1 · 2 equipos conectados»). Android obliga a mostrar ese aviso.
 
@@ -249,45 +249,73 @@ Funciona **en segundo plano**: la app deja un servicio activo con un aviso fijo 
 - Mientras el servicio está activo el equipo mantiene despiertos el Wi-Fi y el procesador, lo que gasta algo más de batería: lo mejor es tener los equipos cargando. Para apagarlo, desmarque **«Compartir con los equipos cercanos»** en Ajustes.
 - Las direcciones manuales deben ser **IP** (por ejemplo `192.168.1.21`), no nombres.
 
-## Satélite: un solo equipo habla con el servidor (v1.8)
+## Administradores y receptores: quién habla con el servidor (v2.1)
 
-Para no saturar el servidor ni gastar datos en todos los equipos, **solo el «satélite» consulta las reservas y sube los registros**.
-Los demás equipos **no se comunican con el servidor**: le entregan lo suyo al satélite por el Wi-Fi y de él reciben las reservas.
+**Todos los equipos son iguales para la red**: cada uno recibe, guarda, procesa y reenvía todo a los demás (reservas, validaciones, ingresos,
+anulaciones, órdenes de borrado). **Solo cambia quién habla con el servidor**: los **administradores**, que son **máximo 2 a la vez y mínimo 1**.
+Ellos suben los registros de todos, traen las reservas del servidor y se las reparten a todos los equipos.
 
-**Ajustes → Red entre equipos → «Papel de este equipo con el servidor»**:
+**Ajustes → Red entre equipos → «Papel de este equipo»**:
 
 | Papel | Qué hace |
 |---|---|
-| **Satélite de la VÍA** | Sube al servidor lo de la vía (validaciones) y trae las reservas para la vía. |
-| **Satélite del INTERIOR** | Sube al servidor lo del interior (ingresos, tickets, fotos) y trae las reservas para el interior. |
-| **Satélite de VÍA e INTERIOR** | Hace las dos cosas (es lo normal si hay un solo equipo con servidor). **Es el valor de fábrica.** |
-| **Normal** | No toca el servidor. Entrega sus registros al satélite y recibe de él las reservas. |
+| **Automático** (valor de fábrica) | Es administrador **solo si hace falta**: si no hay ningún administrador conectado, el primero de los automáticos asume. Así siempre hay uno. |
+| **Administrador** | Quiere administrar: sube al servidor y trae reservas. Si hay más de 2 marcados, **trabajan 2 y los demás quedan de reserva**; cuando uno se desconecta, entra uno de reserva. |
+| **Receptor** | Nunca habla con el servidor. Registra, imprime, valida y se lo entrega a un administrador. |
 
-Cómo dejarlo:
+Cómo dejarlo (recomendado):
 
-1. Elija **un satélite para la vía y uno para el interior** (o uno solo para los dos momentos).
-2. En **todos los demás equipos** ponga **«Normal»**. Como de fábrica todos vienen como satélite, **hay que cambiarlo en cada equipo** o seguirán hablando con el servidor.
-3. Solo en el satélite hay que escribir las direcciones del servidor y el token.
-4. Todos los equipos deben estar en el mismo Wi-Fi que su satélite (ver «Red entre equipos cercanos»).
+1. Marque **«Administrador»** en **1 o 2 equipos** que tengan **buen internet (4G o Wi-Fi con salida)**. Dos es lo ideal: si uno falla, el otro sigue.
+2. Deje todos los demás en **«Automático»** (o «Receptor» si no quiere que nunca administren).
+3. Escriba **las direcciones del servidor y el token en los equipos que pueden administrar** (un equipo sin dirección de servidor se anuncia como receptor).
+4. **Todos los equipos deben estar conectados al mismo Wi-Fi** (ver «Red entre equipos cercanos»).
 
 Qué pasa por detrás:
 
-- **Reservas:** cuando el satélite descarga las reservas del servidor (o carga un Excel), **las empuja a todos los equipos**; no hace falta que ninguno más las consulte. Un equipo «Normal» que se conecta después las pide al satélite.
-- **Registros:** un equipo «Normal» deja sus registros (con su foto) en su bandeja y los **entrega al satélite** de ese momento; el satélite los sube al servidor. Si el satélite no está cerca, quedan guardados y se entregan cuando aparezca. Cuando el servidor confirma, el satélite borra la foto.
-- **Estados:** lo que el servidor ya sabe (validadas, ingresadas) lo ve el satélite y lo reparte; se marca como «SERVIDOR» y no se cuenta como trabajo de ningún equipo.
-- **Contadores:** los equipos de vía validan y **informan cuántas reservas han validado**, para que los de interior sepan qué deben registrar y enviar.
+- **Registrar en cualquier equipo:** un equipo de adentro (sea administrador o receptor) valida si falta, registra, imprime y avisa **a todos** por el Wi-Fi al instante.
+- **Registros al servidor:** un receptor entrega cada registro (con su foto) **a uno de los 2 administradores** (los reparte entre ambos). El administrador que lo recibe **le manda una copia de respaldo al otro**; el que lo suba primero **le avisa al otro** («ya subido») para que no lo repita. Si el servidor ya lo tenía, lo descarta (nunca se duplica).
+- **Si falla la conexión o un administrador:** el registro **no se pierde**: se queda guardado en la cola (en el receptor, en el administrador y en la copia de respaldo) y **se sigue reintentando** hasta que el servidor confirme. Si los 2 administradores están caídos, los registros esperan en cada equipo y se entregan cuando aparezca uno.
+- **Reservas:** cuando un administrador descarga reservas del servidor (o cualquier equipo carga un Excel), **las reparte a todos los demás**. Los equipos que se conectan después las piden a los que ya están.
+- **Estados del servidor:** lo que el servidor ya sabe (validadas, ingresadas) lo ven los administradores y lo reparten a todos; se marca como «SERVIDOR».
+- **Contadores:** cada equipo informa cuántas reservas ha validado y registrado.
+
+> **Importante:** si el equipo administrador se apaga o pierde el Wi-Fi, entra el siguiente (otro administrador o un «Automático»). Pero **nadie sube al servidor si no hay ningún equipo con internet**: en ese caso todo queda guardado en los equipos y sube en cuanto vuelva la conexión.
+
+### Adentro se puede registrar aunque no haya pasado por la vía (v2.1)
+
+- **Equipo de la VÍA:** solo valida (vibra / aviso corto), sin imprimir.
+- **Equipo de INTERIOR (administrador o receptor):** si la reserva ya estaba validada, la registra. **Si no estaba validada, la valida y la registra en el mismo momento**, imprime el ticket y avisa a todos. Queda una alerta «Ingresó sin pasar por la vía» y el servidor recibe `validado_en_via: false` y `validado_en_interior: true`.
+- La opción «Bloquear adentro a quien no pasó por la vía» **ya no se activa sola** (antes el botón «Equipo INTERIOR» la dejaba activada y por eso los equipos que no eran satélite no podían registrar). Sigue existiendo como interruptor en Ajustes, apagada.
 
 ### Equipos conectados (Ajustes → «▸ Equipos conectados»)
 
 Lista desplegable con **cada equipo de la red, por nombre del operario y del equipo**:
 
-- su papel (satélite o normal), su dirección IP y si está conectado ahora;
+- su papel (administrador, automático o receptor), si **administra ahora** (★) o está de reserva, su dirección IP y si está conectado ahora;
 - **última actualización recibida** y **última enviada** a ese equipo (hora exacta y «hace X»);
 - cuántas reservas **validó** y **ingresó** hoy;
 - la última vez que **subió** y **consultó** al servidor;
-- avisos en rojo si **falta un satélite** para algún momento o si hay **dos satélites** para el mismo momento.
+- avisos si **no hay ningún administrador** conectado, si trabaja **uno solo**, o si hay **más de 2 marcados** (los extra quedan de reserva).
 
 Se refresca sola cada 4 segundos. Tocar el indicador «● n equipos conectados» de la pantalla principal abre una lista rápida.
+
+## Radio · walkie-talkie (v2.1)
+
+Un botón **«🎙 RADIO»** flota en el borde derecho de la pantalla principal y de la pantalla de placas. **Mantenga pulsado para hablar** y suelte para escuchar:
+
+- **Rojo «● HABLANDO»** mientras transmite; todos los equipos del mismo canal lo oyen.
+- **Verde «🔊 nombre»** cuando oye a otro equipo (muestra quién habla).
+- Gris «🎙 RADIO» en reposo. Mientras uno habla no oye a los demás (como un walkie-talkie real).
+- La primera vez pide permiso para el **micrófono** (solo se usa mientras el botón está pulsado). Máximo 60 segundos seguidos.
+
+**Por dónde viaja la voz** (dos caminos a la vez; si llega por los dos suena una sola vez):
+
+1. **Por el Wi-Fi**, directo a los equipos conectados (la misma red entre equipos): retraso de menos de un segundo, sin gastar datos.
+2. **Por internet**, a través del servidor, para equipos que estén lejos o en 4G. Hay que escribir la dirección en **Ajustes → RADIO → «Radio por internet»** (por ejemplo `https://mi-servidor.com/api/radio`). Si se deja vacía y la dirección de envío termina en `/api/registros`, se usa la misma cambiando el final por `/api/radio`. El servidor de ejemplo (`servidor/server.js`) ya la incluye.
+
+**Canales:** en Ajustes → RADIO se puede poner un canal (por ejemplo `via` o `interior`); solo se oyen los equipos del mismo canal. Por omisión es `general`.
+
+Notas: la voz es «en vivo», si se corta la señal no se repite lo perdido. Ocupa unos 8 KB por segundo hablando. Se puede apagar en Ajustes (el botón desaparece).
 
 ## Sonido y vibración al leer (v1.8)
 

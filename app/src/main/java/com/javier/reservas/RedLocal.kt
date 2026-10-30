@@ -58,8 +58,9 @@ object RedLocal : RedEquipos.Oyente {
     private var huella = ""
 
     // Estado del reparto de datos entre equipos. Solo se toca desde el hilo 'hilo'.
-    private val enVuelo = HashMap<String, Long>()        // id del registro -> cuándo se mandó al satélite
-    private val rechazados = HashMap<String, Long>()     // id del registro -> cuándo lo rechazó el satélite
+    private val enVuelo = HashMap<String, Long>()        // id del registro -> cuándo se mandó al administrador
+    private val rechazados = HashMap<String, Long>()     // id del registro -> cuándo lo rechazó el administrador
+    private val intentos = HashMap<String, Int>()        // id del registro -> veces que lo rechazaron (para probar con el otro administrador)
 
     private class TablaPendiente(val huella: String, val ids: MutableSet<String>, val desde: Long)
 
@@ -67,12 +68,41 @@ object RedLocal : RedEquipos.Oyente {
     private val tablaEnviada = HashMap<String, String>()             // equipo -> huella de la última tabla que confirmó
     private val ensamblador = TablaRed.Ensamblador()
 
-    /** Cada cuánto se revisa si hay registros por entregar al satélite (por si se perdió un acuse o apareció un satélite). */
+    private var ultimoEmpujeAdmin = 0L
+
+    /**
+     * Cada cuánto se revisa si hay registros por entregar a un administrador (por si se perdió un acuse o apareció uno), y si
+     * este equipo pasó a ser administrador (porque falló el otro) con registros esperando: entonces los sube.
+     */
     private val revision = object : Runnable {
         override fun run() {
             if (!Operacion.ajustes.redActiva) return
-            hilo.execute { empujarBandeja() }
+            hilo.execute {
+                empujarBandeja()
+                try {
+                    val ctx = Operacion.app
+                    val ahora = System.currentTimeMillis()
+                    if (ahora - ultimoEmpujeAdmin > 60_000L && Sincronizacion.configuradoEnvio(ctx) && Bandeja.contar(ctx, Sincronizacion.propios(ctx)) > 0) {
+                        ultimoEmpujeAdmin = ahora
+                        Sincronizacion.enviarAhora(ctx)
+                    }
+                } catch (_: Exception) {
+                }
+            }
             main.postDelayed(this, CADA_REVISION_MS)
+        }
+    }
+
+    // ---------------------------------------------------------------- voz (radio)
+
+    private val hiloVoz = Executors.newSingleThreadExecutor { r -> Thread(r, "red-voz").apply { isDaemon = true } }
+
+    /** Manda un trozo de voz a todos los equipos conectados (sin esperar acuse: si se pierde uno, se pierde un instante de audio). */
+    fun difundirVoz(idDato: String, nombre: String, bytes: ByteArray) {
+        hiloVoz.execute {
+            val r = red ?: return@execute
+            if (!r.activa()) return@execute
+            for (e in r.equipos()) if (e.conectado) r.enviarDato(e.id, idDato, "VOZ", nombre, bytes)
         }
     }
 
@@ -141,7 +171,7 @@ object RedLocal : RedEquipos.Oyente {
         c.nombre = a.nombreEquipo
         c.clave = a.redClaveEfectiva
         c.operador = Supplier { Operacion.ajustes.operador }
-        c.rol = Supplier { Operacion.ajustes.satelite }
+        c.rol = Supplier { Operacion.ajustes.rolAnunciado }
         c.orden = Supplier { Operacion.textoOrden() }
         c.corte = Supplier { Operacion.ajustes.redCorte }
         c.atador = atador
@@ -190,6 +220,7 @@ object RedLocal : RedEquipos.Oyente {
     private fun limpiarEstadoDeReparto() {
         enVuelo.clear()
         rechazados.clear()
+        intentos.clear()
         tablaPendiente.clear()
         tablaEnviada.clear()
     }
@@ -327,7 +358,7 @@ object RedLocal : RedEquipos.Oyente {
     // ---------------------------------------------------------------- datos que van de un equipo a otro (registros, tablas)
 
     override fun alConectarEquipo(idEquipo: String) {
-        // Apareció un equipo: se le entrega lo que estaba esperando y, si este es satélite, la tabla de reservas.
+        // Apareció un equipo: se le entrega lo que estaba esperando y la tabla de reservas.
         hilo.execute {
             empujarBandeja()
             enviarTablaYa(false, idEquipo)
@@ -337,13 +368,12 @@ object RedLocal : RedEquipos.Oyente {
     override fun alDato(idEquipo: String, id: String, tipo: String, meta: String, datos: ByteArray): Boolean = when (tipo) {
         "EVT" -> recibirRegistro(id, meta, datos)
         "TAB" -> recibirTrozoDeTabla(idEquipo, meta, datos)
+        "SUBIDO" -> recibirSubidos(datos)
+        "VOZ" -> Radio.recibirDeRed(meta, datos)
         "PIDE" -> {
-            // Otro equipo pide la tabla de reservas ahora mismo
-            if (!Operacion.ajustes.esSatelite) false
-            else {
-                hilo.execute { enviarTablaYa(true, idEquipo) }
-                true
-            }
+            // Otro equipo pide la tabla de reservas ahora mismo: cualquiera que la tenga se la manda
+            hilo.execute { enviarTablaYa(true, idEquipo) }
+            true
         }
         else -> false
     }
@@ -371,6 +401,8 @@ object RedLocal : RedEquipos.Oyente {
     }
 
     override fun alAcuse(idEquipo: String, id: String, entregado: Boolean) {
+        // Voz, réplicas entre administradores y avisos de «ya subido» no llevan seguimiento
+        if (id.startsWith("VOZ-") || id.startsWith(PREFIJO_REPLICA) || id.startsWith("SUB-")) return
         hilo.execute {
             if (id.startsWith("TAB-")) {
                 acuseDeTabla(idEquipo, id, entregado)
@@ -378,41 +410,117 @@ object RedLocal : RedEquipos.Oyente {
             }
             enVuelo.remove(id)
             if (entregado) {
-                // El satélite lo guardó: ya no hace falta tenerlo en este equipo.
-                val quitados = try { Bandeja.quitar(Operacion.app, setOf(id)) } catch (_: Exception) { emptyList() }
-                for (q in quitados) {
-                    val f = q.optString("foto_archivo", "")
-                    if (f.isNotBlank() && (q.optString("tipo_evento") == "ALERTA" || f.startsWith(DIR_FOTOS_RED))) {
-                        File(Operacion.app.filesDir, f).delete()
-                    }
-                }
+                // Un administrador lo guardó: ya no hace falta tenerlo en este equipo.
+                intentos.remove(id)
+                quitarDeLaCola(setOf(id))
                 Operacion.avisar()
             } else {
                 rechazados[id] = System.currentTimeMillis()
+                intentos[id] = (intentos[id] ?: 0) + 1
             }
             empujarBandeja()
         }
     }
 
-    /** Pide que se revise ya si hay registros por entregar al satélite. */
+    // ---------------------------------------------------------------- administradores
+
+    private const val PREFIJO_REPLICA = "REP-"
+
+    /**
+     * Identificadores de los administradores que trabajan ahora (máximo 2, mínimo 1 si alguno puede serlo), con lo que este
+     * equipo ve. Todos los equipos hacen la misma cuenta, así que llegan al mismo resultado.
+     */
+    fun adminsActivos(a: Ajustes = Operacion.ajustes): Set<String> {
+        val ids = ArrayList<String>()
+        val roles = ArrayList<String>()
+        ids.add(a.idDispositivo); roles.add(a.rolAnunciado)
+        for (e in equipos()) if (e.conectado) { ids.add(e.id); roles.add(e.rol) }
+        return RedEquipos.elegirAdmins(ids, roles)
+    }
+
+    /**
+     * Este equipo es, ahora, uno de los administradores. Solo (sin la red entre equipos) es su propio administrador,
+     * así un equipo suelto con servidor siempre sube lo suyo.
+     */
+    fun soyAdmin(a: Ajustes): Boolean {
+        if (!RedEquipos.puedeAdministrar(a.rolAnunciado)) return false
+        val r = red
+        if (!a.redActiva || r == null || !r.activa()) return true
+        return adminsActivos(a).contains(a.idDispositivo)
+    }
+
+    /** Los otros administradores que están conectados ahora (sin contar a este equipo). */
+    fun administradores(): List<RedEquipos.Equipo> {
+        val a = Operacion.ajustes
+        val activos = adminsActivos(a)
+        return equipos().filter { it.conectado && it.id in activos && it.id != a.idDispositivo }.sortedBy { it.id }
+    }
+
+    /** Compatibilidad con el nombre anterior. */
+    fun satelites(): List<RedEquipos.Equipo> = administradores()
+
+    /** Saca de la cola los registros ya enviados al servidor (o confirmados por otro administrador) y borra las fotos que sobran. */
+    private fun quitarDeLaCola(ids: Set<String>) {
+        val quitados = try { Bandeja.quitar(Operacion.app, ids) } catch (_: Exception) { emptyList() }
+        for (q in quitados) {
+            val f = q.optString("foto_archivo", "")
+            if (f.isNotBlank() && (q.optString("tipo_evento") == "ALERTA" || f.startsWith(DIR_FOTOS_RED))) {
+                File(Operacion.app.filesDir, f).delete()
+            }
+        }
+    }
+
+    /**
+     * El servidor ya recibió estos registros desde este equipo: se le avisa al otro administrador para que no los vuelva a
+     * subir (si lo hace, el servidor los descarta porque ya los tiene).
+     */
+    fun avisarSubidos(ids: Collection<String>) {
+        if (ids.isEmpty() || !Operacion.ajustes.redActiva) return
+        val lista = ids.toList()
+        hilo.execute {
+            val r = red ?: return@execute
+            if (!r.activa()) return@execute
+            for (otro in administradores()) {
+                for (grupo in lista.chunked(300)) {
+                    r.enviarDato(otro.id, "SUB-" + System.nanoTime(), "SUBIDO", "", grupo.joinToString("\n").toByteArray(Charsets.UTF_8))
+                }
+            }
+        }
+    }
+
+    private fun recibirSubidos(datos: ByteArray): Boolean {
+        return try {
+            val ids = String(datos, Charsets.UTF_8).split('\n').filter { it.isNotBlank() }.toSet()
+            if (ids.isNotEmpty()) {
+                quitarDeLaCola(ids)
+                Operacion.avisar()
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Pide que se revise ya si hay registros por entregar al administrador. */
     fun entregarPendientes() {
         if (Operacion.ajustes.redActiva) hilo.execute { empujarBandeja() }
     }
 
-    /** Equipos conectados ahora que son satélites de algún momento. */
-    fun satelites(): List<RedEquipos.Equipo> = equipos().filter { it.conectado && RedEquipos.esSatelite(it.rol) }
-
-    /** Entrega al satélite los registros que este equipo no sube al servidor (con su foto), de a pocos y esperando el acuse. */
+    /**
+     * Entrega a un administrador los registros que este equipo no sube (con su foto), de a pocos y esperando el acuse.
+     * Se reparten entre los dos administradores; si uno rechaza o no está, se prueba con el otro.
+     */
     private fun empujarBandeja() {
         val a = Operacion.ajustes
         val r = red ?: return
         if (!a.redActiva || !r.activa()) return
+        if (soyAdmin(a)) return   // un administrador sube lo suyo él mismo
         val ctx = Operacion.app
         val ahora = System.currentTimeMillis()
         enVuelo.entries.removeAll { ahora - it.value > ACUSE_MS }
         rechazados.entries.removeAll { ahora - it.value > RECHAZO_MS }
         if (enVuelo.size >= VENTANA) return
-        val destinos = r.equipos().filter { it.conectado && RedEquipos.esSatelite(it.rol) }
+        val destinos = administradores()
         if (destinos.isEmpty()) return
         val lote = try {
             Bandeja.primeros(ctx, 40 + enVuelo.size + rechazados.size, Sincronizacion.ajenos(ctx))
@@ -424,7 +532,7 @@ object RedLocal : RedEquipos.Oyente {
             val id = ev.optString("id_evento", "")
             if (id.isEmpty() || enVuelo.containsKey(id) || rechazados.containsKey(id)) continue
             val momento = ev.optString("momento", "INTERIOR")
-            val destino = destinos.firstOrNull { RedEquipos.cubre(it.rol, momento) } ?: continue
+            val destino = destinos[((id.hashCode() and 0x7fffffff) + (intentos[id] ?: 0)) % destinos.size]
             val datos = empaquetar(ctx, ev) ?: continue
             if (r.enviarDato(destino.id, id, "EVT", momento, datos)) enVuelo[id] = ahora
         }
@@ -457,10 +565,18 @@ object RedLocal : RedEquipos.Oyente {
         }
     }
 
-    /** Llegó un registro de otro equipo: si este es el satélite de ese momento, lo deja en su cola para subirlo al servidor. */
-    private fun recibirRegistro(id: String, momento: String, datos: ByteArray): Boolean {
+    /**
+     * Llegó un registro de otro equipo. Si este equipo es administrador lo deja en su cola para subirlo al servidor y le
+     * manda una copia al otro administrador (por si este falla antes de subirlo). Una copia que llega del otro
+     * administrador (id con prefijo REP-) se guarda igual pero no se vuelve a copiar.
+     */
+    private fun recibirRegistro(idRecibido: String, momento: String, datos: ByteArray): Boolean {
         val a = Operacion.ajustes
-        if (!a.esSatelite || !a.cubre(momento)) return false
+        if (!a.puedeAdministrar) return false
+        val esReplica = idRecibido.startsWith(PREFIJO_REPLICA)
+        // Un equipo que no es administrador ahora solo acepta la copia de reserva; los registros directos, solo si le toca
+        if (!esReplica && !soyAdmin(a)) return false
+        val id = idRecibido.removePrefix(PREFIJO_REPLICA)
         return try {
             val ctx = Operacion.app
             val e = DataInputStream(datos.inputStream())
@@ -481,28 +597,37 @@ object RedLocal : RedEquipos.Oyente {
                 f.writeBytes(fb)
                 ev.put("foto_archivo", rel)
             }
-            Bandeja.agregarSiNuevo(ctx, ev)
+            val nuevo = Bandeja.agregarSiNuevo(ctx, ev)
             Sincronizacion.alRegistrar(ctx)
             Operacion.avisar()
+            if (nuevo && !esReplica) copiarAlOtroAdmin(id, momento, datos)
             true
         } catch (_: Exception) {
             false
         }
     }
 
-    // ---- tabla de reservas
-
-    /** Algo cambió en la tabla de reservas de este equipo (la trajo del servidor o se cargó un Excel): si es satélite, la reparte. */
-    fun tablaCambio() {
-        if (Operacion.ajustes.redActiva && Operacion.ajustes.esSatelite) hilo.execute { enviarTablaYa(false, null) }
+    /** Manda una copia del registro al otro administrador conectado (si lo hay). */
+    private fun copiarAlOtroAdmin(id: String, momento: String, datos: ByteArray) {
+        hilo.execute {
+            val r = red ?: return@execute
+            for (otro in administradores()) r.enviarDato(otro.id, PREFIJO_REPLICA + id, "EVT", momento, datos)
+        }
     }
 
-    /** Pide a los satélites conectados que manden la tabla de reservas ahora (para los equipos que no consultan al servidor). */
+    // ---- tabla de reservas
+
+    /** Algo cambió en la tabla de reservas de este equipo (la trajo del servidor, se cargó un Excel o llegó de otro equipo): la reparte. */
+    fun tablaCambio() {
+        if (Operacion.ajustes.redActiva) hilo.execute { enviarTablaYa(false, null) }
+    }
+
+    /** Pide a los equipos conectados que manden la tabla de reservas ahora. */
     fun pedirTablas() {
         hilo.execute {
             val r = red ?: return@execute
             for (d in r.equipos()) {
-                if (d.conectado && RedEquipos.esSatelite(d.rol)) r.enviarDato(d.id, "PIDE-" + System.nanoTime(), "PIDE", "", ByteArray(0))
+                if (d.conectado) r.enviarDato(d.id, "PIDE-" + System.nanoTime(), "PIDE", "", ByteArray(0))
             }
         }
     }
@@ -514,7 +639,7 @@ object RedLocal : RedEquipos.Oyente {
     private fun enviarTablaYa(forzar: Boolean, solo: String?) {
         val a = Operacion.ajustes
         val r = red ?: return
-        if (!a.redActiva || !r.activa() || !a.esSatelite) return
+        if (!a.redActiva || !r.activa()) return
         val destinos = r.equipos().filter { it.conectado && (solo == null || it.id == solo) }
         if (destinos.isEmpty()) return
         val tabla = try {
@@ -571,7 +696,9 @@ object RedLocal : RedEquipos.Oyente {
             val t = TablaRed.decodificar(completa)
             if (t != null && t.filas.isNotEmpty()) {
                 try {
-                    Operacion.enPrincipal { Operacion.fusionarDelServidor(t.encabezados, t.filas, "Red de equipos") }
+                    val r = Operacion.enPrincipal { Operacion.fusionarDelServidor(t.encabezados, t.filas, "Red de equipos") }
+                    // Si trajo reservas que este equipo no tenía, se las pasa a los demás (así llegan a todos aunque no vean al que la mandó)
+                    if (r[0] > 0) enviarTablaYa(false, null)
                 } catch (_: Exception) {
                 }
             }
@@ -594,7 +721,9 @@ object RedLocal : RedEquipos.Oyente {
         val ultimaRecibida: Long,
         val ultimaEnviada: Long,
         val validadas: Int,
-        val ingresadas: Int
+        val ingresadas: Int,
+        /** Es uno de los administradores que trabajan ahora (sube al servidor). */
+        val admin: Boolean = false
     )
 
     fun detalleEquipos(): List<FilaEquipo> {
@@ -606,13 +735,15 @@ object RedLocal : RedEquipos.Oyente {
             emptyMap<String, IntArray>()
         }
         val lista = ArrayList<FilaEquipo>()
+        val activos = adminsActivos(a)
         val mio = conteo[a.idDispositivo]
         lista.add(
             FilaEquipo(
-                true, a.idDispositivo, a.nombreEquipo, a.operador, a.satelite, true,
+                true, a.idDispositivo, a.nombreEquipo, a.operador, a.rolAnunciado, true,
                 misDirecciones().firstOrNull().orEmpty(),
                 otros.maxOfOrNull { it.ultimaRecibida } ?: 0L, otros.maxOfOrNull { it.ultimaEnviada } ?: 0L,
-                mio?.get(0) ?: 0, mio?.get(1) ?: 0
+                mio?.get(0) ?: 0, mio?.get(1) ?: 0,
+                soyAdmin(a)
             )
         )
         for (e in otros) {
@@ -620,24 +751,28 @@ object RedLocal : RedEquipos.Oyente {
             lista.add(
                 FilaEquipo(
                     false, e.id, e.nombre, e.operador, e.rol, e.conectado, e.ip,
-                    e.ultimaRecibida, e.ultimaEnviada, k?.get(0) ?: 0, k?.get(1) ?: 0
+                    e.ultimaRecibida, e.ultimaEnviada, k?.get(0) ?: 0, k?.get(1) ?: 0,
+                    e.conectado && e.id in activos
                 )
             )
         }
         return lista
     }
 
-    /** Problemas con los satélites que se ven ahora: ninguno para un momento, o más de uno. */
+    /** Problemas con los administradores que se ven ahora: ninguno, o más marcados de los que trabajan a la vez. */
     fun avisosDeSatelites(): List<String> {
-        if (!Operacion.ajustes.redActiva) return emptyList()
+        val a = Operacion.ajustes
+        if (!a.redActiva) return emptyList()
         val activos = detalleEquipos().filter { it.conectado }
         val r = ArrayList<String>()
-        for ((momento, nombre) in listOf("VIA" to "VÍA", "INTERIOR" to "INTERIOR")) {
-            val sat = activos.filter { RedEquipos.cubre(it.rol, momento) }
-            when {
-                sat.isEmpty() -> r.add("⚠ No hay un satélite de $nombre conectado: lo de $nombre espera en cada equipo hasta que aparezca uno.")
-                sat.size > 1 -> r.add("⚠ Hay ${sat.size} satélites de $nombre (${sat.joinToString { it.nombre.ifBlank { "sin nombre" } }}). Deje uno solo para no repetir envíos.")
-            }
+        val admins = activos.filter { it.admin }
+        val marcados = activos.filter { RedEquipos.esAdminFijo(it.rol) }
+        when {
+            admins.isEmpty() -> r.add("⚠ No hay ningún administrador conectado: lo registrado espera en cada equipo hasta que aparezca uno. Marque «Administrador» o «Automático» (con la dirección del servidor) en algún equipo.")
+            admins.size == 1 -> r.add("Hay 1 administrador trabajando (" + admins[0].nombre.ifBlank { "sin nombre" } + "). Con un segundo, si este falla el otro sigue.")
+        }
+        if (marcados.size > RedEquipos.MAX_ADMINS) {
+            r.add("ℹ Hay ${marcados.size} equipos marcados como administrador; trabajan solo ${RedEquipos.MAX_ADMINS} y los demás quedan de reserva.")
         }
         return r
     }
