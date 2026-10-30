@@ -458,5 +458,64 @@
             android:text="Cambiar el PIN de configuración"
             android:textColor="@color/blanco"
             app:strokeColor="@color/tarjeta_borde" />
+
+        <TextView
+            style="@style/TituloSeccion"
+            android:layout_marginTop="18dp"
+            android:text="FIN DEL EVENTO · BORRAR DATOS" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Cuando el evento termina se puede dejar todo limpio: listado de reservas, validaciones, ingresos, fotos, alertas y lo que se sabe de los otros equipos. No se borran los ajustes (PIN, servidor, nombre ni papel) y lo que aún no se haya enviado al servidor se sigue enviando. Borra aunque haya registros sin enviar."
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/ajBorradoEstado"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="@color/blanco"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/ajBorradoNota"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/ajBorradoProgramar"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Programar borrado automático (todos los equipos)"
+            android:textColor="@color/blanco"
+            app:strokeColor="@color/tarjeta_borde" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/ajBorradoCancelar"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Cancelar el borrado programado"
+            android:textColor="@color/blanco"
+            app:strokeColor="@color/tarjeta_borde" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/ajBorradoAhora"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Borrar todo AHORA (todos los equipos)"
+            android:textColor="@color/rojo"
+            app:strokeColor="@color/rojo" />
     </LinearLayout>
 </ScrollView>

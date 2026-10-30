@@ -12,8 +12,8 @@ android {
         // Android 7.0 o superior (los equipos Sunmi V2 / P2 traen Android 7.1 u 11)
         minSdk = 24
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.8"
+        versionCode = 11
+        versionName = "2.0"
         // Solo equipos reales (ARM de 64 y 32 bits, como los Sunmi): el APK pesa menos sin las librerías del emulador
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")

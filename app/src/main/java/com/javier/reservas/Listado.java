@@ -313,11 +313,13 @@ public final class Listado {
     /**
      * Agrega o actualiza reservas que llegan del servidor sin perder las del Excel ni los ingresos.
      * Se busca la reserva por código (o por placa si no trae código). Las columnas que no existan se crean.
-     * @return {nuevas, actualizadas}
+     * Sirve para cargar un Excel varias veces (o uno nuevo) sin duplicar: una reserva que ya estaba se reconoce por su código,
+     * por su placa (si la que estaba no tenía código) o, si no trae ni código ni placa, por tener exactamente los mismos datos.
+     * @return {nuevas, ya estaban (actualizadas), de esas cuántas no cambiaron en nada}
      */
     public int[] fusionar(List<String> encNuevos, List<List<String>> filasNuevas) {
-        int nuevas = 0, actualizadas = 0;
-        if (filasNuevas.isEmpty()) return new int[]{0, 0};
+        int nuevas = 0, actualizadas = 0, iguales = 0;
+        if (filasNuevas.isEmpty()) return new int[]{0, 0, 0};
         List<List<String>> tabla = new ArrayList<>();
         tabla.add(encNuevos);
         tabla.addAll(filasNuevas);
@@ -346,15 +348,31 @@ public final class Listado {
         for (int r = 0; r < t.filas.size(); r++) {
             String codigo = t.valor(r, Campo.CODIGO);
             String placa = t.valor(r, Campo.PLACA);
+            List<String> src = t.filas.get(r);
             int fila = -1;
             if (!codigo.isEmpty()) {
                 List<Integer> x = idxCodigo.get(normalizar(codigo));
-                if (x != null && !x.isEmpty()) fila = x.get(0);
+                if (x == null || x.isEmpty()) x = idxCodigo.get(normPlaca(codigo)); // «R 001», «r-001» y «R001» son el mismo código
+                if (x != null && !x.isEmpty()) {
+                    fila = x.get(0);
+                } else if (!placa.isEmpty()) {
+                    // misma placa en una reserva que todavía no tenía código: es la misma reserva
+                    List<Integer> y = idxPlaca.get(normPlaca(placa));
+                    if (y != null) {
+                        for (int cand : y) {
+                            if (valor(cand, Campo.CODIGO).trim().isEmpty()) { fila = cand; break; }
+                        }
+                    }
+                }
             } else if (!placa.isEmpty()) {
                 List<Integer> x = idxPlaca.get(normPlaca(placa));
                 if (x != null && !x.isEmpty()) fila = x.get(0);
+            } else {
+                // sin código ni placa: solo es la misma si tiene exactamente los mismos datos
+                fila = buscarIgual(src, destino);
             }
-            List<String> src = t.filas.get(r);
+            boolean cambio = false;
+            final boolean existia = fila >= 0;
             if (fila < 0) {
                 List<String> f = new ArrayList<>(encabezados.size());
                 for (int c = 0; c < encabezados.size(); c++) f.add("");
@@ -367,14 +385,41 @@ public final class Listado {
             List<String> f = filas.get(fila);
             for (int c = 0; c < src.size(); c++) {
                 String v = src.get(c);
-                if (v != null && !v.isEmpty()) f.set(destino[c], v);
+                if (v != null && !v.isEmpty() && !v.equals(f.get(destino[c]))) {
+                    f.set(destino[c], v);
+                    cambio = true;
+                }
             }
+            if (existia && !cambio) iguales++;
             // reindexar parcial para que una reserva repetida en el mismo lote se actualice y no se duplique
-            if (columna(Campo.CODIGO) >= 0) agregar(idxCodigo, normalizar(f.get(columna(Campo.CODIGO))), fila);
+            if (columna(Campo.CODIGO) >= 0) {
+                String cd = f.get(columna(Campo.CODIGO));
+                agregar(idxCodigo, normalizar(cd), fila);
+                agregar(idxCodigo, normPlaca(cd), fila);
+            }
             if (columna(Campo.PLACA) >= 0) agregar(idxPlaca, normPlaca(f.get(columna(Campo.PLACA))), fila);
         }
         reindexar();
-        return new int[]{nuevas, actualizadas};
+        return new int[]{nuevas, actualizadas, iguales};
+    }
+
+    /** Fila que ya tiene todos los datos de [src] (ya puestos en las columnas [destino]); -1 si no hay. Solo para reservas sin código ni placa. */
+    private int buscarIgual(List<String> src, int[] destino) {
+        boolean algo = false;
+        for (String v : src) if (v != null && !v.isEmpty()) { algo = true; break; }
+        if (!algo) return -1;
+        for (int i = 0; i < filas.size(); i++) {
+            if (!valor(i, Campo.CODIGO).trim().isEmpty() || !valor(i, Campo.PLACA).trim().isEmpty()) continue;
+            List<String> f = filas.get(i);
+            boolean igual = true;
+            for (int c = 0; c < src.size() && igual; c++) {
+                String v = src.get(c);
+                if (v == null || v.isEmpty()) continue;
+                igual = normalizar(v).equals(normalizar(f.get(destino[c])));
+            }
+            if (igual) return i;
+        }
+        return -1;
     }
 
     private int agregarColumna(String titulo) {

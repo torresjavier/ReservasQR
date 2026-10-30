@@ -307,6 +307,37 @@ class Ajustes(ctx: Context) {
         get() = p.getLong("redCorte", 0L)
         set(v) = p.edit().putLong("redCorte", v).apply()
 
+    // ---- Borrado de fin de evento (la orden la da un satélite y se reparte a todos los equipos)
+    /** Número de la orden vigente (la hora en que se dio; una más nueva reemplaza a la anterior). 0 = nunca hubo. */
+    var borradoOrdenId: Long
+        get() = p.getLong("borradoOrdenId", 0L)
+        set(v) = p.edit().putLong("borradoOrdenId", v).apply()
+
+    /** Cuándo se borra todo según la orden vigente (0 = la orden la canceló). */
+    var borradoHora: Long
+        get() = p.getLong("borradoHora", 0L)
+        set(v) = p.edit().putLong("borradoHora", v).apply()
+
+    /** Equipo que dio la orden vigente. */
+    var borradoPor: String
+        get() = texto("borradoPor", "")
+        set(v) = guardar("borradoPor", v)
+
+    /** Última orden ya atendida en este equipo (ejecutada, o descartada por vieja o porque el equipo ya había trabajado después). */
+    var borradoHecho: Long
+        get() = p.getLong("borradoHecho", 0L)
+        set(v) = p.edit().putLong("borradoHecho", v).apply()
+
+    /** Última orden que sí se ejecutó aquí: las tablas de reservas de equipos con una anterior (con datos viejos) se rechazan. */
+    var borradoEpoca: Long
+        get() = p.getLong("borradoEpoca", 0L)
+        set(v) = p.edit().putLong("borradoEpoca", v).apply()
+
+    /** Cuándo se hizo el último borrado en este equipo (para mostrarlo). */
+    var borradoUltimo: Long
+        get() = p.getLong("borradoUltimo", 0L)
+        set(v) = p.edit().putLong("borradoUltimo", v).apply()
+
     /** Ya se pidió el permiso de notificaciones (Android 13+) para el aviso del servicio. */
     var pidioNotificaciones: Boolean
         get() = p.getBoolean("pidioNotif", false)

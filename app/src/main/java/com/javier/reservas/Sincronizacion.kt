@@ -111,6 +111,17 @@ object Bandeja {
         return quitados
     }
 
+    /** Fotos (ruta dentro de los archivos de la app) de los registros que todavía esperan salir: no se deben borrar. */
+    @Synchronized fun fotosEnUso(ctx: Context): Set<String> {
+        val a = leer(ctx)
+        val r = HashSet<String>()
+        for (i in 0 until a.length()) {
+            val f = a.getJSONObject(i).optString("foto_archivo", "")
+            if (f.isNotBlank()) r.add(f)
+        }
+        return r
+    }
+
     /** Códigos y placas (normalizados) de las reservas que todavía tienen registros sin enviar. */
     @Synchronized fun claves(ctx: Context): Set<String> {
         val a = leer(ctx)
@@ -466,6 +477,21 @@ class ReservasWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, param
             Sincronizacion.ultimoError = "Reservas: respuesta no válida del servidor"
             Operacion.avisar()
             Result.failure()
+        }
+    }
+}
+
+/** Respaldo del borrado programado: si Android cerró la app, esta tarea la despierta a la hora fijada. */
+class BorradoWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
+
+    override fun doWork(): Result {
+        val ctx = applicationContext
+        Operacion.iniciar(ctx)
+        return try {
+            Operacion.enPrincipal { Operacion.revisarBorrado() }
+            Result.success()
+        } catch (_: Exception) {
+            Result.retry()
         }
     }
 }

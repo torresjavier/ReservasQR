@@ -1,4 +1,4 @@
-# Reservas QR · v1.8
+# Reservas QR · v2.0
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
@@ -134,6 +134,10 @@ El envío usa internet **solo cuando hay algo que enviar**, con las restriccione
 **Si falla, el registro se conserva con el mismo id** (`id_evento`) y se reintenta en el siguiente ciclo, al volver el internet,
 o con la tarea de respaldo de 15 minutos aunque la app esté cerrada. El servidor confirma devolviendo esos ids.
 
+**Lo que trae el servidor solo actualiza, nunca reemplaza** (igual que «Cargar Excel → Agregar sin duplicar»): suma las reservas nuevas,
+actualiza los datos de las que ya estaban y sube el estado (validada / ingresada) cuando otro equipo ya la había pasado, pero **no borra
+ni baja nada de lo ya validado o ingresado** en el equipo. Si el servidor repite una reserva, no se duplica.
+
 Cada registro lleva su `id_evento` y el `id_reserva` que el servidor le dio a la reserva, para poder actualizarla.
 Detalle de los formatos JSON y un servidor de ejemplo listo para usar: carpeta `servidor/` (`API.md` y `server.js`).
 
@@ -141,6 +145,56 @@ Detalle de los formatos JSON y un servidor de ejemplo listo para usar: carpeta `
 
 La app pide la **clave de desbloqueo del equipo** (PIN, patrón o contraseña) al abrirla,
 y otra vez si estuvo más de 30 segundos en segundo plano. Si el equipo no tiene clave, la app pide configurarla.
+
+## Fin del evento: borrar todo (v2.0)
+
+Cuando el evento y la operación terminan se puede dejar **todo limpio** para el siguiente. Está en **Ajustes (con PIN) → «FIN DEL EVENTO · BORRAR DATOS»**.
+
+**Qué se borra:** el listado de reservas, las validaciones, los ingresos y sus tickets, las fotos, las alertas y lo que el equipo sabía de los
+otros equipos. **Qué no:** los ajustes (PIN, servidor, nombre del equipo, papel de satélite, clave de la red) y los **registros que todavía no
+se hayan enviado al servidor**: el borrado **no espera** a que se envíen, pero esos registros se siguen enviando (con su foto) y desaparecen
+solo cuando el servidor los confirma. La descarga de reservas del servidor vuelve a empezar de cero (trae todo lo que el servidor entregue).
+
+Hay dos formas, y las dos se mandan a **todos los equipos conectados**:
+
+| Opción | Quién | Qué hace |
+|---|---|---|
+| **Borrar todo AHORA (todos los equipos)** | Un **satélite** | Pide escribir `BORRAR` para confirmar. Se borra este equipo y la orden viaja por el Wi-Fi a los demás, que se borran en segundo plano al recibirla. |
+| **Programar borrado automático** | Un **satélite** | Se elige **día y hora**. La orden se guarda en cada equipo y, a esa hora, todos se borran solos sin que nadie toque nada. |
+| **Cancelar el borrado programado** | Un **satélite** | Avisa a todos que no borren. |
+| **Borrar los datos de ESTE equipo ahora** | Un equipo «Normal» | Borra solo ese equipo (no manda ninguna orden). |
+
+Cómo funciona por dentro:
+
+- La orden la da **un satélite**, para que no haya dos órdenes distintas; si se da otra, la más nueva reemplaza a la anterior. Los equipos «Normal» ven en Ajustes lo que está programado.
+- Cada equipo **guarda la orden** y la reenvía a los demás; se cumple con el reloj interno de la app (cada 15 segundos), con el servicio en segundo plano y con una tarea de respaldo de Android. **Los equipos deben estar encendidos a esa hora** (y la red entre equipos encendida para recibir la orden).
+- **Un equipo apagado o fuera del Wi-Fi** recibe la orden apenas se reconecte a cualquier equipo. Si ya pasó la hora, se borra al recibirla **solo si pasaron menos de 12 horas** y el equipo **no trabajó después de esa hora**; si no, la orden se da por atendida sin borrar y hay que borrar ese equipo a mano.
+- Lo que haya pasado antes del borrado no se vuelve a aplicar. **Un equipo que no se borró no puede «revivir» el listado en uno ya limpio**: las tablas de reservas de un equipo con datos de antes del borrado se rechazan, y ese equipo recibe la orden y se limpia.
+- Los relojes de los equipos deben estar en hora.
+- Es **definitivo**: lo borrado no se recupera. Exporte antes si necesita el Excel con los ingresos.
+
+## Cargar el Excel varias veces, sin duplicar (v1.9)
+
+**Menú ⋮ → «Cargar Excel»** (pide el PIN si ya hay un listado). Si todavía no hay reservas, el archivo se carga como siempre.
+Si **ya hay un listado**, después de leer el archivo la app pregunta:
+
+| Opción | Qué hace |
+|---|---|
+| **Agregar sin duplicar** | Suma las reservas nuevas y actualiza las que ya estaban. **No se pierde nada de lo ya validado ni ingresado** (tampoco los tickets ni las fotos). Se puede cargar **el mismo archivo las veces que se quiera**. |
+| **Reemplazar todo** | Borra el listado actual con sus validaciones e ingresos y deja solo el archivo (antes de hacerlo avisa y permite exportar). |
+
+Al terminar, la app muestra cuántas reservas son **nuevas**, cuántas **ya estaban** (y cuántas no cambiaron en nada) y el **total**.
+
+Cómo se reconoce que una reserva «ya estaba»:
+
+1. Por el **código de reserva** (sin importar mayúsculas, espacios ni guiones).
+2. Si la que estaba no tenía código, por la **placa**. Si el archivo trae un código nuevo para esa placa, la reserva recibe el código (no se duplica).
+3. Si la reserva **no trae código ni placa**, solo cuando todos sus datos son idénticos a una que ya estaba.
+
+Una misma placa con **dos códigos distintos** son dos reservas (por ejemplo, el mismo carro en dos eventos). Si el archivo trae columnas que el listado no tenía, se crean.
+
+Si este equipo es **satélite**, lo agregado se reparte a los demás equipos; en los demás equipos no se duplica por la misma regla.
+**Ojo:** «Reemplazar todo» en un equipo no borra las reservas que los otros equipos ya tienen; para empezar de cero en todos hay que hacerlo en cada uno.
 
 ## Columnas del Excel
 

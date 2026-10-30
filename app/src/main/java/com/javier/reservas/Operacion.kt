@@ -90,6 +90,7 @@ object Operacion {
         iniciado = true
         Sincronizacion.escucharRed(app)
         Sincronizacion.iniciarLatido(app)
+        vigilarBorrado()
     }
 
     // ---------------------------------------------------------------- avisos a las pantallas
@@ -152,6 +153,21 @@ object Operacion {
         avisar()
         // Si este equipo es satélite, el listado nuevo se reparte a los demás equipos.
         RedLocal.tablaCambio()
+    }
+
+    /**
+     * Suma las reservas de un Excel al listado que ya hay, SIN duplicar (se reconocen por código o placa) y sin perder lo ya
+     * validado ni ingresado. Se puede cargar el mismo archivo las veces que se quiera. Si este equipo es satélite, se las
+     * reparte a los demás. Devuelve {nuevas, ya estaban, de esas sin ningún cambio}.
+     */
+    fun agregarDeExcel(encabezados: List<String>, filas: List<List<String>>): IntArray {
+        val l = listado ?: return intArrayOf(0, 0, 0)
+        val r = l.fusionar(encabezados, filas)
+        reaplicarEquipos()
+        guardar()
+        avisar()
+        RedLocal.tablaCambio()
+        return r
     }
 
     /**
@@ -452,6 +468,152 @@ object Operacion {
         RedLocal.publicar(tipoRed, fila, horaRed)
         Bandeja.agregar(app, e)
         Sincronizacion.alRegistrar(app)
+        avisar()
+    }
+
+    // ---------------------------------------------------------------- fin del evento: borrar todo
+
+    /** Una orden vencida todavía se ejecuta si no pasó más de esto (un equipo que estaba apagado y vuelve). */
+    private const val VENTANA_ORDEN_MS = 12L * 3_600_000L
+    /** Hasta cuánto después de la hora fijada se considera que la orden se cumple «a tiempo». */
+    private const val GRACIA_ORDEN_MS = 2L * 60_000L
+    private const val CADA_REVISION_BORRADO_MS = 15_000L
+    private const val BORRADO_PROGRAMADO = "borrado_programado"
+    private var vigilandoBorrado = false
+
+    /** La orden de borrado de este equipo, en el formato en que viaja por la red (vacío si nunca hubo una). */
+    fun textoOrden(): String {
+        val a = ajustes
+        return if (a.borradoOrdenId == 0L) "" else RedEquipos.formatoOrden(a.borradoOrdenId, a.borradoHora, a.borradoPor)
+    }
+
+    /** Hay una orden que todavía no se cumple: cuándo (hora), o 0 si no hay ninguna pendiente. */
+    fun borradoPendiente(): Long {
+        val a = ajustes
+        return if (a.borradoOrdenId != 0L && a.borradoHora > 0L && a.borradoOrdenId > a.borradoHecho) a.borradoHora else 0L
+    }
+
+    /**
+     * Una orden de borrado: la dio el operador de este equipo o llegó por la red de otro. Una orden más nueva reemplaza a la
+     * anterior; [hora] = 0 la cancela. @return true si era más nueva que la que había (entonces se reenvía a los demás).
+     */
+    @Synchronized
+    fun recibirOrdenBorrado(id: Long, hora: Long, por: String): Boolean {
+        val a = ajustes
+        val ahora = System.currentTimeMillis()
+        if (id <= a.borradoOrdenId) return false
+        if (id > ahora + 6L * 3_600_000L) return false                    // de un reloj muy adelantado: no es confiable
+        if (hora > 0L && hora < ahora - VENTANA_ORDEN_MS) return false   // tan vieja que ya nadie la cumpliría
+        if (hora == 0L && id < ahora - 7L * 24 * 3_600_000L) return false
+        a.borradoOrdenId = id
+        a.borradoHora = hora
+        a.borradoPor = por
+        programarBorrado()
+        main.post { revisarBorrado() }
+        avisar()
+        return true
+    }
+
+    /**
+     * El operador de este equipo (un satélite) da la orden para TODOS los equipos conectados: borrar a la [hora] dada
+     * (si es menor o igual a la actual, ahora mismo) o, con [hora] = 0, cancelar lo programado. Los equipos que estén
+     * apagados la reciben cuando se reconecten.
+     */
+    fun ordenarBorrado(hora: Long) {
+        val ahora = System.currentTimeMillis()
+        val id = maxOf(ahora, ajustes.borradoOrdenId + 1)
+        val cuando = if (hora <= 0L) 0L else maxOf(hora, ahora)
+        recibirOrdenBorrado(id, cuando, ajustes.nombreEquipo)
+        RedLocal.difundirOrden()
+    }
+
+    /** Si hay una orden pendiente, deja una tarea de Android que la cumpla a su hora aunque se cierre la app. */
+    private fun programarBorrado() {
+        try {
+            val wm = androidx.work.WorkManager.getInstance(app)
+            val hora = borradoPendiente()
+            if (hora == 0L) {
+                wm.cancelUniqueWork(BORRADO_PROGRAMADO)
+                return
+            }
+            val espera = maxOf(0L, hora - System.currentTimeMillis())
+            val w = androidx.work.OneTimeWorkRequestBuilder<BorradoWorker>()
+                .setInitialDelay(espera, TimeUnit.MILLISECONDS)
+                .build()
+            wm.enqueueUniqueWork(BORRADO_PROGRAMADO, androidx.work.ExistingWorkPolicy.REPLACE, w)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Revisa cada pocos segundos si ya llegó la hora del borrado (mientras la app o su servicio estén vivos). */
+    private fun vigilarBorrado() {
+        if (vigilandoBorrado) return
+        vigilandoBorrado = true
+        val tic = object : Runnable {
+            override fun run() {
+                try {
+                    revisarBorrado()
+                } catch (_: Exception) {
+                }
+                main.postDelayed(this, CADA_REVISION_BORRADO_MS)
+            }
+        }
+        main.post { programarBorrado() }
+        main.postDelayed(tic, 3_000L)
+    }
+
+    /**
+     * Cumple la orden de borrado si ya llegó su hora (hilo principal). Una orden vencida hace rato (el equipo estaba apagado)
+     * solo se cumple si no pasaron más de 12 horas y el equipo no trabajó después de esa hora; si no, se da por atendida
+     * sin borrar nada.
+     */
+    fun revisarBorrado() {
+        val a = ajustes
+        val hora = borradoPendiente()
+        if (hora == 0L) return
+        val ahora = System.currentTimeMillis()
+        if (ahora < hora) return
+        val id = a.borradoOrdenId
+        if (ahora - hora > GRACIA_ORDEN_MS) {
+            val l = listado
+            val trabajoDespues = l != null && (l.validaciones.values.any { it > hora } || l.ingresos.values.any { it > hora })
+            if (ahora - hora > VENTANA_ORDEN_MS || trabajoDespues) {
+                a.borradoHecho = id
+                avisar()
+                return
+            }
+        }
+        borrarTodo(hora, id)
+    }
+
+    /** Borra todo lo de la operación en ESTE equipo, sin esperar a que se envíe nada. Conserva los ajustes. */
+    fun borrarEsteEquipo() = borrarTodo(System.currentTimeMillis(), null)
+
+    /**
+     * Deja el equipo limpio: listado, validaciones, ingresos, tickets, fotos, alertas y lo que se supo de los otros equipos
+     * hasta [corte]. NO borra los ajustes ni los registros que aún esperan salir al servidor (esos se siguen enviando).
+     * [orden] es el número de la orden que lo pidió (null si fue solo este equipo).
+     */
+    private fun borrarTodo(corte: Long, orden: Long?) {
+        listado = null
+        info.clear()
+        infoVal.clear()
+        alertaReciente.clear()
+        val enUso = try { Bandeja.fotosEnUso(app) } catch (_: Exception) { emptySet() }
+        dirFotos.listFiles()?.forEach { if ("fotos/${it.name}" !in enUso) it.delete() }
+        File(app.filesDir, RedLocal.DIR_FOTOS_RED).listFiles()?.forEach { if (RedLocal.DIR_FOTOS_RED + it.name !in enUso) it.delete() }
+        try { Alertas.borrar(app) } catch (_: Exception) { }
+        val a = ajustes
+        a.redCorte = maxOf(a.redCorte, corte)
+        // La próxima descarga del servidor trae todo lo que él entregue, no solo lo cambiado desde la última vez.
+        a.ultimaSincReservas = ""
+        a.borradoUltimo = System.currentTimeMillis()
+        if (orden != null) {
+            a.borradoHecho = orden
+            a.borradoEpoca = orden
+        }
+        guardar()
+        RedLocal.alBorrar(a.redCorte)
         avisar()
     }
 

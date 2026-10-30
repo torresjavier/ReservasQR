@@ -95,6 +95,19 @@ public final class RedEquipos {
 
         /** Se completó la conexión con un equipo (llegó su saludo). Buen momento para entregarle lo pendiente. */
         void alConectarEquipo(String idEquipo);
+
+        /**
+         * Llegó una orden de borrado de otro equipo (hora = 0 si la cancela). Hilo de la red; debe ser rápido.
+         * @return true si es más nueva que la que ya se tenía: entonces se reenvía a los demás equipos
+         */
+        default boolean alOrden(String idEquipo, long id, long hora, String por) {
+            return false;
+        }
+    }
+
+    /** Texto de una orden de borrado tal como viaja por la red (sin la letra de tipo). */
+    public static String formatoOrden(long id, long hora, String por) {
+        return id + "\t" + hora + "\t" + EventoRed.escapar(por == null ? "" : por);
     }
 
     /**
@@ -123,6 +136,20 @@ public final class RedEquipos {
             @Override
             public String get() {
                 return ROL_NINGUNO;
+            }
+        };
+        /** Orden de borrado vigente de este equipo, ya en el formato de {@link #formatoOrden} (vacío si no hay). Se avisa a cada equipo que se conecta. */
+        public Supplier<String> orden = new Supplier<String>() {
+            @Override
+            public String get() {
+                return "";
+            }
+        };
+        /** Hora hasta la que se borró todo (lo anterior se ignora: no se guarda ni se reenvía). 0 = nunca se borró. */
+        public Supplier<Long> corte = new Supplier<Long>() {
+            @Override
+            public Long get() {
+                return 0L;
             }
         };
         public int puertoUdp = PUERTO_UDP;
@@ -331,6 +358,27 @@ public final class RedEquipos {
         if (c == null || c.cerrada || !c.saludado) return false;
         c.enviar("D\t" + EventoRed.escapar(id) + "\t" + EventoRed.escapar(tipo) + "\t" + EventoRed.escapar(meta) + "\t" + Base64Red.codificar(datos));
         return true;
+    }
+
+    /** Manda a todos los equipos conectados la orden de borrado vigente de este equipo (si hay una). Los que se conecten después la reciben al saludar. */
+    public void enviarOrden() {
+        String o = valor(cfg.orden);
+        if (!o.isEmpty()) enviarATodos("O\t" + o, null);
+    }
+
+    /** Hora hasta la que se borró todo; los eventos de antes se descartan. */
+    private long corte() {
+        try {
+            Long c = cfg.corte.get();
+            return c == null ? 0L : c;
+        } catch (RuntimeException e) {
+            return 0L;
+        }
+    }
+
+    /** Desde cuándo se guardan, comparan y reenvían eventos: lo más viejo que se conserva, pero nunca de antes del último borrado. */
+    private long desde() {
+        return Math.max(System.currentTimeMillis() - RETENCION_MS, corte() + 1);
     }
 
     /** Avisa ya a los equipos conectados que cambió el operario o el papel de este equipo (si no, se enteran con el próximo aviso). */
@@ -618,7 +666,7 @@ public final class RedEquipos {
 
         void enviarResumen() {
             StringBuilder b = new StringBuilder("R");
-            for (Map.Entry<String, long[]> en : registro.resumen(System.currentTimeMillis() - RETENCION_MS).entrySet()) {
+            for (Map.Entry<String, long[]> en : registro.resumen(desde()).entrySet()) {
                 b.append('\t').append(EventoRed.escapar(en.getKey())).append(':').append(en.getValue()[0]).append(':').append(en.getValue()[1]);
             }
             enviar(b.toString());
@@ -714,6 +762,7 @@ public final class RedEquipos {
                 case "D": if (saludado) alDato(x); return saludado;
                 case "K": if (saludado) alAcuse(x); return saludado;
                 case "S": if (saludado) alPerfil(x); return saludado;
+                case "O": if (saludado) alOrden(x); return saludado;
                 default: return true; // «P» (sigo aquí) y lo desconocido
             }
         }
@@ -742,6 +791,8 @@ public final class RedEquipos {
             saludado = true;
             oyente.alCambiarEquipos();
             enviarResumen();
+            String orden = valor(cfg.orden);
+            if (!orden.isEmpty()) enviar("O\t" + orden);
             try {
                 oyente.alConectarEquipo(id);
             } catch (RuntimeException ignorada) {
@@ -794,6 +845,27 @@ public final class RedEquipos {
             }
         }
 
+        private void alOrden(String[] x) {
+            if (x.length < 4 || idPar == null) return;
+            long id, hora;
+            try {
+                id = Long.parseLong(x[1]);
+                hora = Long.parseLong(x[2]);
+            } catch (NumberFormatException e) {
+                return;
+            }
+            boolean nueva;
+            try {
+                nueva = oyente.alOrden(idPar, id, hora, EventoRed.desescapar(x[3]));
+            } catch (RuntimeException e) {
+                nueva = false;
+            }
+            if (!nueva) return;
+            marcarRecibido();
+            oyente.alCambiarEquipos();
+            enviarATodos("O\t" + x[1] + "\t" + x[2] + "\t" + x[3], this);
+        }
+
         private void alResumen(String[] x) {
             Map<String, long[]> remoto = new HashMap<>();
             for (int i = 1; i < x.length; i++) {
@@ -807,7 +879,7 @@ public final class RedEquipos {
                 } catch (NumberFormatException ignorada) {
                 }
             }
-            long desde = System.currentTimeMillis() - RETENCION_MS;
+            long desde = desde();
             Map<String, long[]> local = registro.resumen(desde);
             Set<String> origenes = new HashSet<>(local.keySet());
             origenes.addAll(remoto.keySet());
@@ -822,7 +894,7 @@ public final class RedEquipos {
             if (x.length < 3) return;
             TreeSet<Long> tiene = RangosSeq.decodificar(x[2]);
             if (tiene == null) return;
-            long desde = System.currentTimeMillis() - RETENCION_MS;
+            long desde = desde();
             for (EventoRed e : registro.faltantes(EventoRed.desescapar(x[1]), desde, tiene)) {
                 enviar("E\t" + e.codificar());
             }
@@ -830,7 +902,7 @@ public final class RedEquipos {
 
         private void alEvento(String[] x) {
             EventoRed e = EventoRed.decodificar(x, 1);
-            if (e == null || e.hora < System.currentTimeMillis() - RETENCION_MS) return;
+            if (e == null || e.hora < System.currentTimeMillis() - RETENCION_MS || e.hora <= corte()) return;
             if (!registro.agregar(e)) return;
             Par par = idPar == null ? null : pares.get(idPar);
             if (par != null) par.recibidos.incrementAndGet();

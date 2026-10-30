@@ -142,6 +142,8 @@ object RedLocal : RedEquipos.Oyente {
         c.clave = a.redClaveEfectiva
         c.operador = Supplier { Operacion.ajustes.operador }
         c.rol = Supplier { Operacion.ajustes.satelite }
+        c.orden = Supplier { Operacion.textoOrden() }
+        c.corte = Supplier { Operacion.ajustes.redCorte }
         c.atador = atador
         c.puertoUdp = puertoUdpPropio
         c.puertoTcp = puertoTcpPropio
@@ -346,6 +348,28 @@ object RedLocal : RedEquipos.Oyente {
         else -> false
     }
 
+    /** Llegó una orden de borrado de otro equipo (o su cancelación). */
+    override fun alOrden(idEquipo: String, id: Long, hora: Long, por: String): Boolean =
+        Operacion.recibirOrdenBorrado(id, hora, por)
+
+    /** Manda ya a los equipos conectados la orden de borrado de este equipo (los que se conecten después la reciben al saludar). */
+    fun difundirOrden() {
+        if (!Operacion.ajustes.redActiva) return
+        hilo.execute { red?.takeIf { it.activa() }?.enviarOrden() }
+    }
+
+    /** Este equipo acaba de borrar todo: olvida lo que sabía de los otros equipos hasta [corte] y lo que tenía a medio repartir. */
+    fun alBorrar(corte: Long) {
+        hilo.execute {
+            try {
+                registro().podar(corte + 1)
+            } catch (_: Exception) {
+            }
+            limpiarEstadoDeReparto()
+            avisarEstado()
+        }
+    }
+
     override fun alAcuse(idEquipo: String, id: String, entregado: Boolean) {
         hilo.execute {
             if (id.startsWith("TAB-")) {
@@ -502,7 +526,8 @@ object RedLocal : RedEquipos.Oyente {
             null
         } ?: return
         val bytes = TablaRed.codificar(tabla.first, tabla.second)
-        val huella = TablaRed.huella(bytes)
+        // La época es el último borrado general que cumplió este equipo: quien ya borró no acepta tablas de uno que no.
+        val huella = TablaRed.huella(bytes) + "@" + a.borradoEpoca
         val trozos = TablaRed.trocear(bytes, TROZO)
         val ahora = System.currentTimeMillis()
         for (d in destinos) {
@@ -538,6 +563,9 @@ object RedLocal : RedEquipos.Oyente {
         if (x.size != 3) return false
         val indice = x[1].toIntOrNull() ?: return false
         val total = x[2].toIntOrNull() ?: return false
+        // «huella@época»: si el que la manda tiene datos de antes del último borrado de este equipo, no se le acepta.
+        val epoca = x[0].substringAfter('@', "").toLongOrNull() ?: 0L
+        if (epoca < Operacion.ajustes.borradoEpoca) return false
         val completa = ensamblador.agregar(idEquipo + ":" + x[0], indice, total, datos) ?: return true
         hilo.execute {
             val t = TablaRed.decodificar(completa)

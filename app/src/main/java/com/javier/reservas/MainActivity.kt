@@ -35,6 +35,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -371,6 +372,7 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {
         }
         comprobarBloqueo()
+        Operacion.revisarBorrado()
         refrescar()
         iniciarRedEntreEquipos()
     }
@@ -934,7 +936,7 @@ class MainActivity : AppCompatActivity() {
             cont.addView(fila)
         }
 
-        item(R.drawable.ic_archivo, "Cargar Excel", "Reemplaza el listado desde un archivo .xlsx o .csv") {
+        item(R.drawable.ic_archivo, "Cargar Excel", "Agrega las reservas de un .xlsx o .csv sin duplicar (o reemplaza el listado)") {
             confirmarSiHayAvance { pedirArchivo(null) }
         }
         item(R.drawable.ic_bluetooth, "Recibir Excel por Bluetooth", "Hace visible el equipo para recibir el archivo") { mostrarBluetooth() }
@@ -1111,8 +1113,9 @@ class MainActivity : AppCompatActivity() {
         if (l == null) {
             hacer(); return
         }
-        // Reemplazar el listado cambia toda la operación: pide el PIN de configuración
-        conPin { confirmarReemplazo(hacer) }
+        // Tocar el listado cambia toda la operación: pide el PIN de configuración.
+        // Si agrega o reemplaza se decide después de leer el archivo (ver preguntarComoCargar).
+        conPin { hacer() }
     }
 
     private fun confirmarReemplazo(hacer: () -> Unit) {
@@ -1139,17 +1142,56 @@ class MainActivity : AppCompatActivity() {
                 Listado.desdeTabla(nombre, LectorTabla.leer(bytes))
             }
             runOnUiThread {
-                r.onSuccess { l ->
-                    Operacion.reemplazarListado(l)
-                    edtPlaca.setText("")
-                    verLista = Vista.PENDIENTES
-                    refrescar()
-                    mostrarColumnas(true)
+                r.onSuccess { nuevo ->
+                    val actual = listado
+                    if (actual == null || actual.filas.isEmpty()) reemplazarPor(nuevo)
+                    else preguntarComoCargar(actual, nuevo)
                 }.onFailure { e ->
                     mostrarError("No se pudo leer el archivo", (e.message ?: e.toString()) + "\n\nEn el menú ⋮ → «Columnas del Excel» puede ver cómo debe estar el archivo.")
                 }
             }
         }.start()
+    }
+
+    /** Deja solo este archivo como listado (lo anterior, con sus validaciones e ingresos, se borra). */
+    private fun reemplazarPor(nuevo: Listado) {
+        Operacion.reemplazarListado(nuevo)
+        edtPlaca.setText("")
+        verLista = Vista.PENDIENTES
+        refrescar()
+        mostrarColumnas(true)
+    }
+
+    /** Ya hay reservas cargadas: se elige entre sumar las del archivo (sin duplicar) o empezar de cero con él. */
+    private fun preguntarComoCargar(actual: Listado, nuevo: Listado) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Ya hay un listado cargado")
+            .setMessage(
+                "Ahora hay ${actual.filas.size} reservas (${actual.ingresos.size} ingresos y ${actual.cantidadValidados()} validaciones) en «${actual.nombreArchivo}». " +
+                    "El archivo «${nuevo.nombreArchivo}» trae ${nuevo.filas.size}.\n\n" +
+                    "• Agregar sin duplicar: suma las reservas nuevas y actualiza las que ya estaban (mismo código o misma placa). No se pierde nada de lo validado ni ingresado. Puede cargar el mismo archivo varias veces.\n\n" +
+                    "• Reemplazar todo: borra el listado actual con sus validaciones e ingresos y deja solo este archivo."
+            )
+            .setPositiveButton("Agregar sin duplicar") { _, _ -> agregarAlListado(nuevo) }
+            .setNeutralButton("Reemplazar todo") { _, _ -> confirmarReemplazo { reemplazarPor(nuevo) } }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun agregarAlListado(nuevo: Listado) {
+        val r = Operacion.agregarDeExcel(nuevo.encabezados, nuevo.filas)
+        val total = listado?.filas?.size ?: 0
+        refrescar()
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Listado actualizado")
+            .setMessage(
+                "Reservas nuevas agregadas: ${r[0]}\n" +
+                    "Ya estaban (no se duplicaron): ${r[1]}" + (if (r[1] > 0) " · ${r[2]} sin ningún cambio" else "") + "\n" +
+                    "Total ahora: $total reservas\n\n" +
+                    "Lo que ya estaba validado o ingresado se conserva."
+            )
+            .setPositiveButton("Aceptar", null)
+            .show()
     }
 
     // ---------------------------------------------------------------- columnas
@@ -1445,6 +1487,7 @@ class MainActivity : AppCompatActivity() {
         redIps.setText(ajustes.redIps)
         sonido.isChecked = ajustes.sonidoAlLeer
         val cierraEquipos = prepararListaEquipos(v)
+        val cierraBorrado = prepararBorrado(v)
         v.findViewById<View>(R.id.ajRedBateria).setOnClickListener { permitirSegundoPlano() }
 
         v.findViewById<View>(R.id.ajPerfilVia).setOnClickListener {
@@ -1513,8 +1556,139 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancelar", null)
             .create()
-            .also { it.setOnDismissListener { cierraEquipos() } }
+            .also { it.setOnDismissListener { cierraEquipos(); cierraBorrado() } }
             .show()
+    }
+
+    // ---------------------------------------------------------------- fin del evento: borrar todo (dentro de Ajustes, con PIN)
+
+    private val fmtBorrado = SimpleDateFormat("EEEE dd/MM/yyyy hh:mm a", co)
+
+    /**
+     * Sección «Fin del evento» de Ajustes. Solo un satélite puede dar la orden para todos los equipos (programada o ahora);
+     * los demás equipos ven lo programado y pueden borrar solo lo suyo.
+     * @return lo que hay que llamar al cerrar Ajustes
+     */
+    private fun prepararBorrado(v: View): () -> Unit {
+        val estado = v.findViewById<TextView>(R.id.ajBorradoEstado)
+        val nota = v.findViewById<TextView>(R.id.ajBorradoNota)
+        val programar = v.findViewById<Button>(R.id.ajBorradoProgramar)
+        val cancelar = v.findViewById<Button>(R.id.ajBorradoCancelar)
+        val ahora = v.findViewById<Button>(R.id.ajBorradoAhora)
+        val esSatelite = ajustes.esSatelite
+
+        programar.visibility = if (esSatelite) View.VISIBLE else View.GONE
+        cancelar.visibility = if (esSatelite) View.VISIBLE else View.GONE
+        ahora.text = if (esSatelite) "Borrar todo AHORA (todos los equipos)" else "Borrar los datos de ESTE equipo ahora"
+
+        fun pintar() {
+            val pend = Operacion.borradoPendiente()
+            val por = ajustes.borradoPor.ifBlank { "un satélite" }
+            if (pend > 0L) {
+                estado.text = "Borrado programado: ${fmtBorrado.format(Date(pend))}"
+                nota.text = "Lo ordenó $por. A esa hora se borra todo en los equipos conectados; el que esté apagado o fuera del Wi-Fi se borra al volver (hasta 12 horas después)."
+            } else {
+                estado.text = if (ajustes.borradoUltimo > 0L) "Sin borrado programado. Último borrado en este equipo: ${fmtBorrado.format(Date(ajustes.borradoUltimo))}" else "Sin borrado programado"
+                nota.text = when {
+                    !esSatelite -> "Este equipo no es satélite: el borrado de todos los equipos lo programa un satélite. Aquí solo se puede borrar este equipo."
+                    !ajustes.redActiva -> "La red entre equipos está apagada: la orden solo se cumpliría en este equipo."
+                    else -> "La orden se manda por el Wi-Fi a todos los equipos conectados y la guardan, así que se cumple aunque en ese momento nadie toque nada."
+                }
+            }
+            cancelar.isEnabled = pend > 0L
+        }
+        pintar()
+
+        programar.setOnClickListener {
+            elegirFechaYHora { t ->
+                if (t < System.currentTimeMillis() + 60_000L) {
+                    toast("Elija una hora que todavía no haya pasado.")
+                    return@elegirFechaYHora
+                }
+                MaterialAlertDialogBuilder(this)
+                    .setTitle("¿Programar el borrado?")
+                    .setMessage(
+                        "El ${fmtBorrado.format(Date(t))} se borrará TODO en este equipo y en todos los equipos conectados: listado de reservas, validaciones, ingresos, fotos, alertas y registros de la red. " +
+                            "Los equipos apagados lo harán apenas se enciendan. No se borran los ajustes ni lo que aún esté por enviarse al servidor.\n\nPuede cancelarlo antes de esa hora."
+                    )
+                    .setPositiveButton("Programar") { _, _ ->
+                        Operacion.ordenarBorrado(t)
+                        pintar()
+                        toast("Borrado programado.")
+                    }
+                    .setNegativeButton("Cancelar", null)
+                    .show()
+            }
+        }
+        cancelar.setOnClickListener {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("¿Cancelar el borrado programado?")
+                .setMessage("Se avisa a todos los equipos conectados para que no borren nada a esa hora.")
+                .setPositiveButton("Cancelar el borrado") { _, _ ->
+                    Operacion.ordenarBorrado(0L)
+                    pintar()
+                    toast("Borrado cancelado.")
+                }
+                .setNegativeButton("Volver", null)
+                .show()
+        }
+        ahora.setOnClickListener {
+            val caja = EditText(this).apply {
+                hint = "Escriba BORRAR"
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            }
+            val m = (20 * resources.displayMetrics.density).toInt()
+            val cont = FrameLayout(this).apply {
+                setPadding(m, m / 2, m, 0)
+                addView(caja)
+            }
+            val donde = if (esSatelite) "en este equipo y en TODOS los equipos conectados (los apagados, al encenderse)" else "solo en ESTE equipo"
+            MaterialAlertDialogBuilder(this)
+                .setTitle("¿Borrar todo ahora?")
+                .setMessage(
+                    "Se borra $donde: listado de reservas, validaciones, ingresos, fotos, alertas y registros de la red. NO se puede deshacer.\n\n" +
+                        "No se borran los ajustes, y lo que aún no se haya enviado al servidor se sigue enviando.\n\nPara confirmar escriba BORRAR."
+                )
+                .setView(cont)
+                .setPositiveButton("Borrar todo") { _, _ ->
+                    if (caja.text.toString().trim().uppercase(Locale.ROOT) != "BORRAR") {
+                        toast("No se borró nada: había que escribir BORRAR.")
+                    } else {
+                        if (esSatelite) Operacion.ordenarBorrado(System.currentTimeMillis()) else Operacion.borrarEsteEquipo()
+                        pintar()
+                        toast("Datos borrados.")
+                    }
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
+        }
+        val oyente: () -> Unit = { pintar() }
+        Operacion.escuchar(oyente)
+        return { Operacion.dejarDeEscuchar(oyente) }
+    }
+
+    /** Pide una fecha y luego una hora (con el reloj de Android) y entrega ese momento. */
+    private fun elegirFechaYHora(alElegir: (Long) -> Unit) {
+        val hoy = java.util.Calendar.getInstance()
+        val fecha = android.app.DatePickerDialog(
+            this,
+            { _, anio, mes, dia ->
+                android.app.TimePickerDialog(
+                    this,
+                    { _, hora, minuto ->
+                        val c = java.util.Calendar.getInstance()
+                        c.set(anio, mes, dia, hora, minuto, 0)
+                        c.set(java.util.Calendar.MILLISECOND, 0)
+                        alElegir(c.timeInMillis)
+                    },
+                    hoy.get(java.util.Calendar.HOUR_OF_DAY), hoy.get(java.util.Calendar.MINUTE), false
+                ).show()
+            },
+            hoy.get(java.util.Calendar.YEAR), hoy.get(java.util.Calendar.MONTH), hoy.get(java.util.Calendar.DAY_OF_MONTH)
+        )
+        fecha.datePicker.minDate = System.currentTimeMillis() - 60_000L
+        fecha.setTitle("¿Qué día se borra?")
+        fecha.show()
     }
 
     // ---------------------------------------------------------------- equipos conectados (desplegable en Ajustes)
