@@ -14,9 +14,10 @@
 
     <ImageView
         android:id="@+id/miIcono"
-        android:layout_width="24dp"
-        android:layout_height="24dp"
+        android:layout_width="@dimen/icono"
+        android:layout_height="@dimen/icono"
         android:contentDescription="@null"
+        android:tag="icono"
         app:tint="@color/blanco" />
 
     <LinearLayout

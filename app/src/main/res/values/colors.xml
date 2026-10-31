@@ -11,4 +11,10 @@
     <color name="tarjeta_borde">#262626</color>
     <color name="texto">#FFFFFF</color>
     <color name="texto_suave">#9B9B9B</color>
+
+    <!-- Botones grises y negros -->
+    <color name="gris_boton">#55555A</color>
+    <color name="gris_borde">#8E8E93</color>
+    <color name="gris_claro">#D0D0D4</color>
+    <color name="negro_borde">#BDBDBD</color>
 </resources>

@@ -94,7 +94,7 @@
                 android:layout_marginTop="14dp"
                 android:gravity="center"
                 android:textColor="@color/texto"
-                android:textSize="14sp" />
+                android:textSize="15sp" />
         </LinearLayout>
 
         <LinearLayout
@@ -107,30 +107,17 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/resSecundario"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/BotonContorno"
                 android:layout_width="0dp"
-                android:layout_height="60dp"
-                android:layout_weight="1"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:textColor="@color/blanco"
-                android:textSize="15sp"
-                app:cornerRadius="14dp"
-                app:strokeColor="@color/tarjeta_borde" />
+                android:layout_height="@dimen/boton_alto_grande"
+                android:layout_weight="1" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/resPrincipal"
                 android:layout_width="0dp"
-                android:layout_height="60dp"
+                android:layout_height="@dimen/boton_alto_grande"
                 android:layout_marginStart="10dp"
-                android:layout_weight="1"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:textColor="@color/blanco"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                app:backgroundTint="@color/rojo"
-                app:cornerRadius="14dp" />
+                android:layout_weight="1" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

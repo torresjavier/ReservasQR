@@ -12,7 +12,6 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 import com.github.mikephil.charting.charts.BarChart
 import com.github.mikephil.charting.charts.HorizontalBarChart
 import com.github.mikephil.charting.charts.PieChart
@@ -35,7 +34,7 @@ import java.util.Locale
  * algo nuevo (de este equipo o de otros). Los números salen de [Estadisticas]; aquí solo se dibujan.
  * Hecha con código (sin archivo de diseño), igual que las demás pantallas de la app.
  */
-class EstadisticasActivity : AppCompatActivity() {
+class EstadisticasActivity : BaseActivity() {
 
     private val main = Handler(Looper.getMainLooper())
     private val horaFmt = SimpleDateFormat("hh:mm:ss a", Locale("es", "CO"))
@@ -219,7 +218,9 @@ class EstadisticasActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         barra.addView(texto("←", 26f, Color.WHITE, true).apply {
-            setPadding(dp(4), dp(4), dp(14), dp(4))
+            gravity = Gravity.CENTER
+            minimumWidth = dp(48)      // botón de volver con el mismo tamaño mínimo que los demás
+            minimumHeight = dp(48)
             setOnClickListener { finish() }
         })
         barra.addView(texto("ESTADÍSTICAS", 18f, Color.WHITE, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))

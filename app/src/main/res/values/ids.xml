@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Claves para recordar el tamaño original de los iconos (Apariencia.kt) -->
+    <item name="tag_icono_base" type="id" />
+    <item name="tag_icono_caja" type="id" />
+</resources>

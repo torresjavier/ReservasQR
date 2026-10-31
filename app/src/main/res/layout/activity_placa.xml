@@ -230,48 +230,30 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnLinterna"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/BotonContorno"
                 android:layout_width="0dp"
-                android:layout_height="58dp"
+                android:layout_height="@dimen/boton_alto"
                 android:layout_weight="1"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
                 android:text="Luz"
-                android:textColor="@color/blanco"
-                app:cornerRadius="14dp"
-                app:icon="@drawable/ic_linterna"
-                app:iconTint="@color/blanco"
-                app:strokeColor="@color/tarjeta_borde" />
+                app:icon="@drawable/ic_linterna" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnEscribirPlaca"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/BotonContorno"
                 android:layout_width="0dp"
-                android:layout_height="58dp"
+                android:layout_height="@dimen/boton_alto"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1.3"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
                 android:text="Escribir"
-                android:textColor="@color/blanco"
-                app:cornerRadius="14dp"
-                app:icon="@drawable/ic_buscar"
-                app:iconTint="@color/blanco"
-                app:strokeColor="@color/tarjeta_borde" />
+                app:icon="@drawable/ic_buscar" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnTerminar"
                 android:layout_width="0dp"
-                android:layout_height="58dp"
+                android:layout_height="@dimen/boton_alto"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1.3"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:text="Terminar"
-                android:textColor="@color/blanco"
-                android:textStyle="bold"
-                app:backgroundTint="@color/rojo"
-                app:cornerRadius="14dp" />
+                android:text="Terminar" />
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

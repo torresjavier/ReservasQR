@@ -14,7 +14,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textColor="@color/texto_suave"
-        android:textSize="14sp" />
+        android:textSize="15sp" />
 
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
@@ -56,7 +56,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
         android:textColor="@color/rojo"
-        android:textSize="14sp"
+        android:textSize="15sp"
         android:textStyle="bold"
         android:visibility="gone" />
 </LinearLayout>

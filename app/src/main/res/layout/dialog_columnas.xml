@@ -17,7 +17,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textColor="@color/texto_suave"
-            android:textSize="14sp" />
+            android:textSize="15sp" />
 
         <LinearLayout
             android:id="@+id/colLista"

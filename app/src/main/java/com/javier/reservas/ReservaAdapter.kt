@@ -1,6 +1,7 @@
 package com.javier.reservas
 
 import android.annotation.SuppressLint
+import android.content.res.ColorStateList
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -65,14 +66,30 @@ class ReservaAdapter(
                 h.hora.setTextColor(ctx.getColor(R.color.rojo))
             }
         }
-        // La foto del registro (la del ingreso, o la de la vía si no hay): miniatura; un toque la agranda
+        // Foto de la tarjeta: en una reserva INGRESADA es la del ingreso (la que se toma al validar adentro e imprimir);
+        // si ese ingreso no tiene foto se muestra un marcador de cámara, nunca la foto de la vía. Mientras solo está
+        // validada se ve la foto de la vía. Un toque agranda la foto.
         val archivoFoto = Operacion.foto(f)
-        h.foto.visibility = if (archivoFoto != null) View.VISIBLE else View.GONE
-        Fotos.cargar(h.foto, archivoFoto, 200)
-        if (archivoFoto != null) {
-            h.foto.setOnClickListener { Fotos.ver(ctx, archivoFoto, l.valor(f, Listado.Campo.PLACA).uppercase().ifBlank { l.titulo(f) }) }
-        } else {
+        val sinFotoIngreso = t != null && archivoFoto == null
+        h.foto.visibility = if (archivoFoto != null || sinFotoIngreso) View.VISIBLE else View.GONE
+        if (sinFotoIngreso) {
+            Fotos.cargar(h.foto, null, 200)
+            val pad = (20 * ctx.resources.displayMetrics.density).toInt()
+            h.foto.scaleType = ImageView.ScaleType.FIT_CENTER
+            h.foto.setPadding(pad, pad, pad, pad)
+            h.foto.imageTintList = ColorStateList.valueOf(ctx.getColor(R.color.texto_suave))
+            h.foto.setImageResource(R.drawable.ic_camara)
             h.foto.setOnClickListener(null)
+        } else {
+            h.foto.scaleType = ImageView.ScaleType.CENTER_CROP
+            h.foto.setPadding(0, 0, 0, 0)
+            h.foto.imageTintList = null
+            Fotos.cargar(h.foto, archivoFoto, 200)
+            if (archivoFoto != null) {
+                h.foto.setOnClickListener { Fotos.ver(ctx, archivoFoto, l.valor(f, Listado.Campo.PLACA).uppercase().ifBlank { l.titulo(f) }) }
+            } else {
+                h.foto.setOnClickListener(null)
+            }
         }
 
         h.nombre.text = l.valor(f, Listado.Campo.NOMBRE).ifBlank { l.titulo(f) }

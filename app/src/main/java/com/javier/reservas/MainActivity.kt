@@ -46,7 +46,6 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
@@ -66,7 +65,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : BaseActivity() {
 
     private enum class Estilo { OK, VIP, AVISO, ERROR, INFO }
 
@@ -247,6 +246,7 @@ class MainActivity : AppCompatActivity() {
         )
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        ajustarIconos()
         Operacion.iniciar(this)
         Bloqueo.instalar()
 
@@ -641,9 +641,43 @@ class MainActivity : AppCompatActivity() {
         modo: Operacion.Accion? = null
     ) {
         val l = listado ?: return
+        if (tomandoFoto) return   // todavía se está tomando la foto de la lectura anterior
+        val accion = modo ?: Operacion.accionPara(origen)
+        // Adentro (ingresar) con QR o búsqueda no hay foto de placa: se toma una rápida con la cámara trasera y esa es la
+        // que queda guardada en la tarjeta del ingreso. Con «Leer placa» la foto ya viene del mismo cuadro de la placa.
+        if (accion == Operacion.Accion.INGRESAR && ajustes.fotoAlRegistrar && !l.ingresado(fila)) {
+            tomandoFoto = true
+            FotoRapida.tomar(this) { foto ->
+                tomandoFoto = false
+                registrarConFoto(fila, origen, forzar, modo, foto)
+            }
+            return
+        }
+        registrarConFoto(fila, origen, forzar, modo, null)
+    }
+
+    /** true mientras la cámara rápida toma la foto del ingreso (así una lectura repetida no se registra dos veces). */
+    private var tomandoFoto = false
+
+    private fun registrarConFoto(
+        fila: Int,
+        origen: Operacion.Origen,
+        forzar: Boolean,
+        modo: Operacion.Accion?,
+        foto: Bitmap?
+    ) {
+        val l = listado ?: return
+        if (isFinishing || isDestroyed) {
+            // La pantalla se cerró mientras se tomaba la foto: se registra igual, sin mostrar nada
+            try {
+                Operacion.procesar(fila, origen, null, foto, null, forzar, modo)
+            } catch (_: Exception) {
+            }
+            return
+        }
         val vip = l.esVip(fila)
         val resultado = try {
-            Operacion.procesar(fila, origen, null, null, null, forzar, modo)
+            Operacion.procesar(fila, origen, null, foto, null, forzar, modo)
         } catch (e: Exception) {
             mostrarError("No se pudo registrar", e.message ?: e.toString())
             return
@@ -819,6 +853,7 @@ class MainActivity : AppCompatActivity() {
         val tImpresion = v.findViewById<TextView>(R.id.resImpresion)
         val bSec = v.findViewById<Button>(R.id.resSecundario)
         val bPri = v.findViewById<Button>(R.id.resPrincipal)
+        Apariencia.iconos(v)
 
         tTitulo.text = titulo
         val (fondo, texto) = when (estilo) {
@@ -932,6 +967,7 @@ class MainActivity : AppCompatActivity() {
             }
             fila.findViewById<TextView>(R.id.miDetalle).text = detalle
             fila.setOnClickListener { hoja.dismiss(); accionItem() }
+            Apariencia.iconos(fila)
             cont.addView(fila)
         }
 
@@ -1434,6 +1470,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun abrirAjustes() {
         val v = layoutInflater.inflate(R.layout.dialog_ajustes, null)
+        val apariencia0 = Triple(Apariencia.posicionLetras(this), Apariencia.posicionIconos(this), Apariencia.colorBotones(this))
         val op = v.findViewById<EditText>(R.id.ajOperador)
         val neg = v.findViewById<EditText>(R.id.ajNegocio)
         val bien = v.findViewById<EditText>(R.id.ajBienvenida)
@@ -1459,6 +1496,10 @@ class MainActivity : AppCompatActivity() {
         val redClave = v.findViewById<EditText>(R.id.ajRedClave)
         val redIps = v.findViewById<EditText>(R.id.ajRedIps)
         val sonido = v.findViewById<MaterialSwitch>(R.id.ajSonidoLeer)
+        val fotoRegistrar = v.findViewById<MaterialSwitch>(R.id.ajFotoRegistrar)
+        val apLetras = v.findViewById<Spinner>(R.id.ajLetras)
+        val apIconos = v.findViewById<Spinner>(R.id.ajIconos)
+        val apBotones = v.findViewById<Spinner>(R.id.ajBotones)
         val satelite = v.findViewById<Spinner>(R.id.ajSatelite)
 
         satelite.adapter = adaptadorSpinner(ROLES_SATELITE.map { it.second })
@@ -1491,6 +1532,13 @@ class MainActivity : AppCompatActivity() {
         redClave.setText(ajustes.redClave)
         redIps.setText(ajustes.redIps)
         sonido.isChecked = ajustes.sonidoAlLeer
+        fotoRegistrar.isChecked = ajustes.fotoAlRegistrar
+        apLetras.adapter = adaptadorSpinner(Apariencia.LETRAS.map { it.first })
+        apLetras.setSelection(Apariencia.posicionLetras(this))
+        apIconos.adapter = adaptadorSpinner(Apariencia.ICONOS.map { it.first })
+        apIconos.setSelection(Apariencia.posicionIconos(this))
+        apBotones.adapter = adaptadorSpinner(Apariencia.BOTONES.map { it.second })
+        apBotones.setSelection(Apariencia.BOTONES.indexOfFirst { it.first == Apariencia.colorBotones(this) }.coerceAtLeast(0))
         val cierraEquipos = prepararListaEquipos(v)
         val cierraBorrado = prepararBorrado(v)
         v.findViewById<View>(R.id.ajRedBateria).setOnClickListener { permitirSegundoPlano() }
@@ -1541,6 +1589,10 @@ class MainActivity : AppCompatActivity() {
             ajustes.redClave = redClave.text.toString()
             ajustes.redIps = redIps.text.toString()
             ajustes.sonidoAlLeer = sonido.isChecked
+            ajustes.fotoAlRegistrar = fotoRegistrar.isChecked
+            ajustes.apLetras = apLetras.selectedItemPosition.coerceIn(0, Apariencia.LETRAS.size - 1)
+            ajustes.apIconos = apIconos.selectedItemPosition.coerceIn(0, Apariencia.ICONOS.size - 1)
+            ajustes.apBotones = Apariencia.BOTONES[apBotones.selectedItemPosition.coerceIn(0, Apariencia.BOTONES.size - 1)].first
             ajustes.satelite = ROLES_SATELITE[satelite.selectedItemPosition.coerceIn(0, ROLES_SATELITE.size - 1)].first
             if (!ajustes.puedeAdministrar) {
                 Toast.makeText(
@@ -1563,6 +1615,9 @@ class MainActivity : AppCompatActivity() {
                 guardarCampos()
                 if (ajustes.urlReservas.isNotBlank()) Sincronizacion.actualizarReservasAhora(this)
                 if (Bandeja.cantidad(this) > 0) Sincronizacion.enviarAhora(this)
+                // Letras, iconos o color de botones distintos: se vuelve a dibujar la pantalla con lo elegido
+                val apariencia1 = Triple(Apariencia.posicionLetras(this), Apariencia.posicionIconos(this), Apariencia.colorBotones(this))
+                if (apariencia1 != apariencia0) recreate()
             }
             .setNegativeButton("Cancelar", null)
             .create()

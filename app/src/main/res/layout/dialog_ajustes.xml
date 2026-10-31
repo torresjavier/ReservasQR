@@ -33,24 +33,20 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/ajPerfilVia"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/BotonContorno"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Equipo de la VÍA"
-                android:textColor="@color/blanco"
-                app:strokeColor="@color/tarjeta_borde" />
+                android:text="Equipo de la VÍA" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/ajPerfilInterior"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/BotonContorno"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
-                android:text="Equipo INTERIOR"
-                android:textColor="@color/blanco"
-                app:strokeColor="@color/tarjeta_borde" />
+                android:text="Equipo INTERIOR" />
         </LinearLayout>
 
         <com.google.android.material.materialswitch.MaterialSwitch
@@ -204,6 +200,74 @@
         <TextView
             style="@style/TituloSeccion"
             android:layout_marginTop="18dp"
+            android:text="FOTO DEL VEHÍCULO" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/ajFotoRegistrar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tomar la foto al registrar el ingreso con QR o por búsqueda" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Adentro, al validar e imprimir el ticket, la tarjeta de la reserva guarda la foto del ingreso (la de la vía no la reemplaza). Con «Leer placa» la foto se toma sola; con QR o búsqueda se toma con la cámara trasera, así que apunte el equipo al vehículo."
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
+
+        <TextView
+            style="@style/TituloSeccion"
+            android:layout_marginTop="18dp"
+            android:text="APARIENCIA" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tamaño de las letras"
+            android:textColor="@color/texto_suave"
+            android:textSize="13sp" />
+
+        <Spinner
+            android:id="@+id/ajLetras"
+            android:layout_width="match_parent"
+            android:layout_height="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Tamaño de los iconos"
+            android:textColor="@color/texto_suave"
+            android:textSize="13sp" />
+
+        <Spinner
+            android:id="@+id/ajIconos"
+            android:layout_width="match_parent"
+            android:layout_height="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Color de los botones"
+            android:textColor="@color/texto_suave"
+            android:textSize="13sp" />
+
+        <Spinner
+            android:id="@+id/ajBotones"
+            android:layout_width="match_parent"
+            android:layout_height="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Los cambios se aplican al tocar «Guardar»: la pantalla se vuelve a dibujar con el tamaño y el color elegidos."
+            android:textColor="@color/texto_suave"
+            android:textSize="12sp" />
+
+        <TextView
+            style="@style/TituloSeccion"
+            android:layout_marginTop="18dp"
             android:text="RED ENTRE EQUIPOS" />
 
         <TextView
@@ -241,7 +305,7 @@
             android:layout_marginTop="12dp"
             android:text="Papel de este equipo (administrador o receptor)"
             android:textColor="@color/blanco"
-            android:textSize="14sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <Spinner
@@ -334,24 +398,20 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/ajSincronizar"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/BotonContorno"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:text="Sincronizar ahora"
-                android:textColor="@color/blanco"
-                app:strokeColor="@color/tarjeta_borde" />
+                android:text="Sincronizar ahora" />
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajRedBateria"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/BotonContorno"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Permitir trabajar en segundo plano (batería)"
-            android:textColor="@color/blanco"
-            app:strokeColor="@color/tarjeta_borde" />
+            android:text="Permitir trabajar en segundo plano (batería)" />
 
         <TextView
             style="@style/TituloSeccion"
@@ -441,23 +501,19 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajPrueba"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/BotonContorno"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Imprimir ticket de prueba"
-            android:textColor="@color/blanco"
-            app:strokeColor="@color/tarjeta_borde" />
+            android:text="Imprimir ticket de prueba" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajCambiarPin"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/BotonContorno"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Cambiar el PIN de configuración"
-            android:textColor="@color/blanco"
-            app:strokeColor="@color/tarjeta_borde" />
+            android:text="Cambiar el PIN de configuración" />
 
         <TextView
             style="@style/TituloSeccion"
@@ -477,7 +533,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:textColor="@color/blanco"
-            android:textSize="14sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <TextView
@@ -490,27 +546,23 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajBorradoProgramar"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/BotonContorno"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Programar borrado automático (todos los equipos)"
-            android:textColor="@color/blanco"
-            app:strokeColor="@color/tarjeta_borde" />
+            android:text="Programar borrado automático (todos los equipos)" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajBorradoCancelar"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/BotonContorno"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Cancelar el borrado programado"
-            android:textColor="@color/blanco"
-            app:strokeColor="@color/tarjeta_borde" />
+            android:text="Cancelar el borrado programado" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/ajBorradoAhora"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/BotonContorno"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"

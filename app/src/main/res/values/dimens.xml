@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Una sola medida para todos los botones -->
+    <dimen name="boton_alto">48dp</dimen>
+    <dimen name="boton_alto_grande">52dp</dimen>
+    <dimen name="boton_esquina">14dp</dimen>
+    <dimen name="boton_icono">22dp</dimen>
+
+    <!-- Iconos -->
+    <dimen name="icono_chico">20dp</dimen>
+    <dimen name="icono">24dp</dimen>
+    <dimen name="icono_dock">28dp</dimen>
+    <dimen name="boton_redondo">64dp</dimen>
+    <dimen name="boton_redondo_icono">32dp</dimen>
+</resources>

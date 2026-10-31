@@ -30,7 +30,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
-import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
@@ -81,7 +80,7 @@ import kotlin.math.min
  *  5. Con el vehículo en movimiento: escena de acción / obturador rápido, y se descartan los cuadros movidos.
  *  6. Sin placa por 20 segundos: modo ahorro (casi no procesa y baja el brillo).
  */
-class PlacaActivity : AppCompatActivity() {
+class PlacaActivity : BaseActivity() {
 
     companion object {
         /** El operador tocó «Escribir»: la pantalla principal abre el buscador con esta placa. */
@@ -262,6 +261,7 @@ class PlacaActivity : AppCompatActivity() {
         )
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_placa)
+        ajustarIconos()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         Operacion.iniciar(this)
 

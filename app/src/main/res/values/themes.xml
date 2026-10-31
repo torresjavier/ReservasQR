@@ -11,6 +11,97 @@
         <item name="android:windowBackground">@color/fondo</item>
         <item name="android:statusBarColor">@color/fondo</item>
         <item name="android:navigationBarColor">@color/fondo</item>
+
+        <!-- Botones: una sola medida y letra; los colores salen de Ajustes → Apariencia (estilos Botones.*) -->
+        <item name="materialButtonStyle">@style/Boton</item>
+        <item name="materialButtonOutlinedStyle">@style/BotonContorno</item>
+        <item name="colorBoton">@color/rojo</item>
+        <item name="colorBotonTexto">@color/blanco</item>
+        <item name="colorBotonBorde">@android:color/transparent</item>
+        <item name="colorBotonContorno">@color/tarjeta_borde</item>
+        <item name="colorBotonAcento">@color/rojo</item>
+    </style>
+
+    <!-- Botón lleno (acción principal) -->
+    <style name="Boton" parent="Widget.Material3.Button">
+        <item name="android:minHeight">@dimen/boton_alto</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">?attr/colorBotonTexto</item>
+        <item name="backgroundTint">?attr/colorBoton</item>
+        <item name="iconTint">?attr/colorBotonTexto</item>
+        <item name="iconSize">@dimen/boton_icono</item>
+        <item name="cornerRadius">@dimen/boton_esquina</item>
+        <item name="strokeColor">?attr/colorBotonBorde</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <!-- Botón redondo de solo icono («Leer placa») -->
+    <style name="BotonRedondo" parent="Boton">
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:insetLeft">0dp</item>
+        <item name="android:insetRight">0dp</item>
+        <item name="android:paddingLeft">0dp</item>
+        <item name="android:paddingRight">0dp</item>
+        <item name="android:paddingTop">0dp</item>
+        <item name="android:paddingBottom">0dp</item>
+        <item name="android:paddingStart">0dp</item>
+        <item name="android:paddingEnd">0dp</item>
+        <item name="iconPadding">0dp</item>
+        <item name="cornerRadius">100dp</item>
+    </style>
+
+    <!-- Botón de contorno (acción secundaria) -->
+    <style name="BotonContorno" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:minHeight">@dimen/boton_alto</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/blanco</item>
+        <item name="iconTint">@color/blanco</item>
+        <item name="iconSize">@dimen/boton_icono</item>
+        <item name="cornerRadius">@dimen/boton_esquina</item>
+        <item name="strokeColor">?attr/colorBotonContorno</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <!-- Colores de botones que se eligen en Ajustes → Apariencia (se aplican sobre el tema) -->
+    <style name="Botones.Rojo" parent="">
+        <item name="colorBoton">@color/rojo</item>
+        <item name="colorBotonTexto">@color/blanco</item>
+        <item name="colorBotonBorde">@android:color/transparent</item>
+        <item name="colorBotonContorno">@color/rojo</item>
+        <item name="colorBotonAcento">@color/rojo</item>
+    </style>
+
+    <style name="Botones.Blanco" parent="">
+        <item name="colorBoton">@color/blanco</item>
+        <item name="colorBotonTexto">@color/negro</item>
+        <item name="colorBotonBorde">@android:color/transparent</item>
+        <item name="colorBotonContorno">@color/blanco</item>
+        <item name="colorBotonAcento">@color/blanco</item>
+    </style>
+
+    <style name="Botones.Gris" parent="">
+        <item name="colorBoton">@color/gris_boton</item>
+        <item name="colorBotonTexto">@color/blanco</item>
+        <item name="colorBotonBorde">@android:color/transparent</item>
+        <item name="colorBotonContorno">@color/gris_borde</item>
+        <item name="colorBotonAcento">@color/gris_claro</item>
+    </style>
+
+    <style name="Botones.Negro" parent="">
+        <item name="colorBoton">@color/negro</item>
+        <item name="colorBotonTexto">@color/blanco</item>
+        <item name="colorBotonBorde">@color/negro_borde</item>
+        <item name="colorBotonContorno">@color/negro_borde</item>
+        <item name="colorBotonAcento">@color/blanco</item>
     </style>
 
     <!-- Foto de perfil redonda -->

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Colores de los botones; los define el estilo Botones.* que se elige en Ajustes → Apariencia -->
+    <attr name="colorBoton" format="color" />
+    <attr name="colorBotonTexto" format="color" />
+    <attr name="colorBotonBorde" format="color" />
+    <attr name="colorBotonContorno" format="color" />
+    <attr name="colorBotonAcento" format="color" />
+</resources>

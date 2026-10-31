@@ -10,7 +10,6 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import java.text.SimpleDateFormat
@@ -22,7 +21,7 @@ import java.util.Locale
  * (las fotos viajan por el Wi-Fi), del más reciente al más viejo. Un toque en la foto la muestra completa.
  * Hecha con código (sin archivo de diseño), igual que las demás pantallas de la app.
  */
-class RegistrosActivity : AppCompatActivity() {
+class RegistrosActivity : BaseActivity() {
 
     private enum class Filtro(val titulo: String) {
         TODOS("Todos"), CON_FOTO("Con foto"), INGRESOS("Ingresos"), VIA("Vía")
@@ -74,7 +73,9 @@ class RegistrosActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         barra.addView(texto("←", 26f, Color.WHITE, true).apply {
-            setPadding(dp(4), dp(4), dp(14), dp(4))
+            gravity = Gravity.CENTER
+            minimumWidth = dp(48)      // botón de volver con el mismo tamaño mínimo que los demás
+            minimumHeight = dp(48)
             setOnClickListener { finish() }
         })
         barra.addView(texto("REGISTROS", 18f, Color.WHITE, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -85,8 +86,9 @@ class RegistrosActivity : AppCompatActivity() {
 
         val filtros = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for (f in Filtro.values()) {
-            val chip = texto(f.titulo, 13f, Color.WHITE, true).apply {
+            val chip = texto(f.titulo, 14f, Color.WHITE, true).apply {
                 gravity = Gravity.CENTER
+                minimumHeight = dp(40)
                 setPadding(dp(14), dp(8), dp(14), dp(8))
                 setOnClickListener {
                     filtro = f

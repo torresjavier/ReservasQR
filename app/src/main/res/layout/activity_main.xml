@@ -42,7 +42,7 @@
                         android:background="@drawable/circulo_blanco"
                         android:gravity="center"
                         android:textColor="@color/negro"
-                        android:textSize="20sp"
+                        android:textSize="19sp"
                         android:textStyle="bold" />
 
                     <com.google.android.material.imageview.ShapeableImageView
@@ -87,11 +87,14 @@
 
                 <ImageButton
                     android:id="@+id/btnMenu"
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="Más opciones"
+                    android:padding="12dp"
+                    android:scaleType="fitCenter"
                     android:src="@drawable/ic_menu"
+                    android:tag="icono"
                     app:tint="@color/blanco" />
             </LinearLayout>
 
@@ -186,7 +189,7 @@
             <!-- Buscador de placa -->
             <FrameLayout
                 android:layout_width="match_parent"
-                android:layout_height="60dp"
+                android:layout_height="54dp"
                 android:layout_marginTop="14dp"
                 android:layout_marginEnd="8dp">
 
@@ -206,16 +209,17 @@
                     android:singleLine="true"
                     android:textColor="@color/negro"
                     android:textColorHint="#80000000"
-                    android:textSize="24sp"
+                    android:textSize="22sp"
                     android:textStyle="bold" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="@dimen/icono"
+                    android:layout_height="@dimen/icono"
                     android:layout_gravity="center_vertical|start"
                     android:layout_marginStart="16dp"
                     android:contentDescription="Buscar"
                     android:src="@drawable/ic_buscar"
+                    android:tag="icono"
                     app:tint="@color/negro" />
 
                 <ImageButton
@@ -226,7 +230,10 @@
                     android:layout_marginEnd="6dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="Borrar búsqueda"
+                    android:padding="12dp"
+                    android:scaleType="fitCenter"
                     android:src="@drawable/ic_cerrar"
+                    android:tag="icono"
                     android:visibility="gone"
                     app:tint="@color/negro" />
             </FrameLayout>
@@ -336,10 +343,11 @@
                 android:paddingBottom="6dp">
 
                 <ImageView
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
+                    android:layout_width="@dimen/icono_dock"
+                    android:layout_height="@dimen/icono_dock"
                     android:contentDescription="Escanear QR"
                     android:src="@drawable/ic_qr"
+                    android:tag="icono"
                     app:tint="@color/blanco" />
 
                 <TextView
@@ -359,23 +367,23 @@
                 android:gravity="center"
                 android:orientation="vertical">
 
-                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnDockPlaca"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    style="@style/BotonRedondo"
+                    android:layout_width="@dimen/boton_redondo"
+                    android:layout_height="@dimen/boton_redondo"
                     android:contentDescription="Leer placa con la cámara"
-                    android:src="@drawable/ic_camara"
-                    app:backgroundTint="@color/rojo"
-                    app:fabCustomSize="72dp"
-                    app:maxImageSize="34dp"
-                    app:tint="@color/blanco" />
+                    android:tag="icono"
+                    app:icon="@drawable/ic_camara"
+                    app:iconGravity="textStart"
+                    app:iconSize="@dimen/boton_redondo_icono" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:text="Leer placa"
-                    android:textColor="@color/rojo"
+                    android:textColor="?attr/colorBotonAcento"
                     android:textSize="13sp"
                     android:textStyle="bold" />
             </LinearLayout>
@@ -392,10 +400,11 @@
                 android:paddingBottom="6dp">
 
                 <ImageView
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
+                    android:layout_width="@dimen/icono_dock"
+                    android:layout_height="@dimen/icono_dock"
                     android:contentDescription="Buscar placa"
                     android:src="@drawable/ic_buscar"
+                    android:tag="icono"
                     app:tint="@color/blanco" />
 
                 <TextView
@@ -470,11 +479,12 @@
         android:visibility="gone">
 
         <ImageView
-            android:layout_width="72dp"
-            android:layout_height="72dp"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
             android:contentDescription="Bloqueado"
             android:src="@drawable/ic_candado"
-            app:tint="@color/rojo" />
+            android:tag="icono"
+            app:tint="?attr/colorBotonAcento" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -498,18 +508,10 @@
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnDesbloquear"
             android:layout_width="match_parent"
-            android:layout_height="62dp"
+            android:layout_height="@dimen/boton_alto_grande"
             android:layout_marginTop="28dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
             android:text="Desbloquear"
-            android:textColor="@color/negro"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            app:backgroundTint="@color/blanco"
-            app:cornerRadius="16dp"
             app:icon="@drawable/ic_candado"
-            app:iconGravity="textStart"
-            app:iconTint="@color/negro" />
+            app:iconGravity="textStart" />
     </LinearLayout>
 </FrameLayout>

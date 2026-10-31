@@ -317,6 +317,24 @@ class Ajustes(ctx: Context) {
         get() = p.getBoolean("sonidoAlLeer", true)
         set(v) = guardar("sonidoAlLeer", v)
 
+    /** Al registrar un ingreso con QR o búsqueda (adentro) se toma una foto rápida con la cámara y esa es la que se guarda. */
+    var fotoAlRegistrar: Boolean
+        get() = p.getBoolean("fotoAlRegistrar", true)
+        set(v) = guardar("fotoAlRegistrar", v)
+
+    // Apariencia (se leen también desde Apariencia.kt, antes de que arranque la operación)
+    var apLetras: Int
+        get() = p.getInt(Apariencia.CLAVE_LETRAS, Apariencia.LETRAS_NORMAL)
+        set(v) { p.edit().putInt(Apariencia.CLAVE_LETRAS, v).apply() }
+
+    var apIconos: Int
+        get() = p.getInt(Apariencia.CLAVE_ICONOS, Apariencia.ICONOS_NORMAL)
+        set(v) { p.edit().putInt(Apariencia.CLAVE_ICONOS, v).apply() }
+
+    var apBotones: String
+        get() = p.getString(Apariencia.CLAVE_BOTONES, null) ?: Apariencia.BOTONES_ROJO
+        set(v) { p.edit().putString(Apariencia.CLAVE_BOTONES, v).apply() }
+
     /** Hora desde la que se aceptan avisos de otros equipos (se mueve al «Borrar ingresos»). */
     var redCorte: Long
         get() = p.getLong("redCorte", 0L)

@@ -1,7 +1,30 @@
-# Reservas QR · v2.3
+# Reservas QR · v2.4
 
 App para el ingreso de vehículos con reserva, pensada para el **Sunmi V3H**
 (impresora y lector integrados). Funciona en Android 7.0 o superior.
+
+## Novedades de la v2.4
+
+### 1. La tarjeta muestra la foto del INGRESO (la que se toma al validar adentro e imprimir)
+Antes, si una reserva ingresaba con QR o por búsqueda no se tomaba ninguna foto, y la tarjeta mostraba la foto de la vía (o nada). Ahora:
+
+- **Una reserva ya ingresada muestra solo la foto de su ingreso**, nunca la de la vía. Si ese ingreso no tiene foto, la tarjeta muestra un **marcador de cámara gris** (así se nota que falta).
+- Mientras la reserva solo está **validada** (todavía no ingresa), la tarjeta muestra la foto de la vía.
+- Con **«Leer placa»** la foto se sigue tomando sola, del mismo cuadro donde se leyó la placa.
+- Con **QR o búsqueda** (adentro, al validar e imprimir el ticket) el equipo ahora toma una **foto rápida con la cámara trasera** (cerca de 1 segundo) y esa es la que se guarda en el ingreso. Se puede apagar en **Ajustes → FOTO DEL VEHÍCULO**. Si no hay permiso de cámara, la cámara falla o se demora, el ingreso se registra igual, sin foto.
+- Al **anular** un ingreso se borra su foto y la reserva vuelve a mostrar la foto de la vía.
+- Los ingresos hechos **antes de esta versión sin foto de ingreso** mostrarán el marcador de cámara (la foto de la vía ya no se usa para ellos).
+
+> Con el lector de arriba del Sunmi, al leer el QR el equipo apunta al QR, no al vehículo. Para que la foto muestre la placa conviene usar **«Leer placa»**, o apuntar el equipo al vehículo al registrar.
+
+### 2. Diseño unificado y Ajustes → APARIENCIA
+- **Todos los botones tienen la misma altura (48 dp; 52 dp los principales) y la misma letra (15 sp en negrita)**. Antes había botones de 58, 60 y 62 dp, con letras de 14, 15 y 17.
+- Los iconos tienen tamaños fijos (24 dp en listas y menús, 28 dp abajo, 22 dp dentro de los botones). El botón redondo de «Leer placa» es ahora un botón normal de 64 dp.
+- **Ajustes → APARIENCIA** (se aplica al tocar «Guardar»; la pantalla se vuelve a dibujar sola):
+  - **Tamaño de las letras**: Pequeñas · Normales · Grandes · Muy grandes.
+  - **Tamaño de los iconos**: Pequeños · Normales · Grandes · Muy grandes.
+  - **Color de los botones**: Rojos · Blancos · Grises · Negros (los botones negros llevan un borde claro para que se vean sobre el fondo oscuro).
+- El tamaño de letra elegido reemplaza al de la configuración de Android del equipo, y se aplica a la pantalla principal, la cámara de placas, «Registros con foto» y «Estadísticas».
 
 ## Novedades de la v2.3
 

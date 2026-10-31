@@ -640,8 +640,20 @@ object Operacion {
         avisar()
     }
 
-    fun foto(fila: Int): File? =
-        (info[fila]?.foto ?: infoVal[fila]?.foto)?.let { File(app.filesDir, it) }?.takeIf { it.exists() }
+    /**
+     * La foto que se muestra en las tarjetas. Una reserva ya INGRESADA muestra solo la foto del ingreso (la que se toma al
+     * validar adentro e imprimir el ticket), nunca la de la vía; la foto de la vía solo se ve mientras la reserva está
+     * validada y todavía no ha ingresado.
+     */
+    fun foto(fila: Int): File? {
+        val ingresada = listado?.ingresos?.containsKey(fila) == true
+        val ruta = if (ingresada) info[fila]?.foto else infoVal[fila]?.foto
+        return ruta?.let { File(app.filesDir, it) }?.takeIf { it.exists() && it.length() > 0L }
+    }
+
+    /** La foto de la vía (validación), por si hace falta verla aparte. */
+    fun fotoVia(fila: Int): File? =
+        infoVal[fila]?.foto?.let { File(app.filesDir, it) }?.takeIf { it.exists() && it.length() > 0L }
 
     // ---------------------------------------------------------------- fotos que se reparten entre los equipos
 
